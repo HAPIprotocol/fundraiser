@@ -27,6 +27,9 @@ pub trait ExtContract {
         sender_id: AccountId,
         deposit_amount: U128,
     ) -> PromiseOrValue<U128>;
+
+    /// Callback after account creation.
+    fn on_create_account(&mut self, new_account_id: AccountId) -> Promise;
 }
 
 #[derive(Serialize, Deserialize)]

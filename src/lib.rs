@@ -1,9 +1,10 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap, UnorderedMap};
+use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::json_types::U128;
 use near_sdk::{env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, Promise, PublicKey};
 
 use crate::sale::VSale;
+use crate::token_receiver::ext_self;
 
 mod sale;
 mod token_receiver;
@@ -13,6 +14,12 @@ pub(crate) const ONE_NEAR: Balance = 10u128.pow(24);
 
 const BASE_GAS: Gas = Gas(5_000_000_000_000);
 pub(crate) const CREATE_ACCOUNT_GAS: Gas = Gas(4 * BASE_GAS.0);
+pub(crate) const ON_CREATE_ACCOUNT_GAS: Gas = Gas(4 * BASE_GAS.0);
+
+const NO_DEPOSIT: Balance = 0;
+const ACCESS_KEY_ALLOWANCE: Balance = ONE_NEAR / 100;
+const CREATE_LINK_AMOUNT: Balance = ONE_NEAR / 100;
+const CREATE_ACCOUNT_AMOUNT: Balance = ONE_NEAR / 100;
 
 const REFERRAL_FEE_DENOMINATOR: u128 = 10000;
 const NEAR_ACCOUNT: &str = "near";
@@ -20,6 +27,18 @@ const NEAR_ACCOUNT: &str = "near";
 #[derive(BorshSerialize, BorshDeserialize)]
 struct Account {
     referrer: AccountId,
+    links: UnorderedSet<PublicKey>,
+}
+
+impl Account {
+    pub fn new(account_id: &AccountId, referrer: &AccountId) -> Self {
+        Self {
+            referrer: referrer.clone(),
+            links: UnorderedSet::new(StorageKey::AccountLinks {
+                account_id: account_id.clone(),
+            }),
+        }
+    }
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
@@ -27,6 +46,8 @@ pub(crate) enum StorageKey {
     Accounts,
     Sales,
     AccountSales { sale_id: u64 },
+    Links,
+    AccountLinks { account_id: AccountId },
 }
 
 #[near_bindgen]
@@ -36,33 +57,104 @@ struct Contract {
     referral_fees: Vec<u64>,
     accounts: UnorderedMap<AccountId, Account>,
     sales: LookupMap<u64, VSale>,
+    links: LookupMap<PublicKey, AccountId>,
     num_sales: u64,
+}
+
+impl Contract {
+    fn internal_remove_link(&mut self, account_id: AccountId, public_key: PublicKey) -> Promise {
+        let mut account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        self.links.remove(&public_key);
+        account.links.remove(&public_key);
+        self.accounts.insert(&account_id, &account);
+        Promise::new(env::current_account_id()).delete_key(public_key)
+    }
 }
 
 #[near_bindgen]
 impl Contract {
     pub fn new(owner_id: AccountId, join_fee: U128, referral_fees: Vec<u64>) -> Self {
-        Self {
+        let mut this = Self {
             owner_id,
             join_fee: join_fee.0,
             referral_fees,
             accounts: UnorderedMap::new(StorageKey::Accounts),
             sales: LookupMap::new(StorageKey::Sales),
+            links: LookupMap::new(StorageKey::Links),
             num_sales: 0,
-        }
+        };
+        this.accounts.insert(
+            &this.owner_id,
+            &Account::new(&this.owner_id, &this.owner_id),
+        );
+        this
     }
 
-    pub fn create_account(&mut self, account_id: AccountId, public_key: PublicKey) -> Promise {
-        Promise::new(AccountId::new_unchecked(NEAR_ACCOUNT.to_string())).function_call(
+    #[payable]
+    pub fn create_link(&mut self, public_key: PublicKey) -> Promise {
+        assert_eq!(env::attached_deposit(), CREATE_LINK_AMOUNT);
+        let mut account = self
+            .accounts
+            .get(&env::predecessor_account_id())
+            .expect("ERR_NO_ACCOUNT");
+        assert!(self.links.get(&public_key).is_none(), "ERR_DUPLICATE_KEY");
+        self.links
+            .insert(&public_key, &env::predecessor_account_id());
+        account.links.insert(&public_key);
+        self.accounts
+            .insert(&env::predecessor_account_id(), &account);
+        Promise::new(env::current_account_id()).add_access_key(
+            public_key,
+            ACCESS_KEY_ALLOWANCE,
+            env::current_account_id(),
             "create_account".to_string(),
-            format!(
-                "{{\"new_account_id\": \"{}\", \"new_public_key\": \"{:?}\"}}",
-                account_id, public_key
-            )
-            .into_bytes(),
-            env::storage_byte_cost() * 500,
-            CREATE_ACCOUNT_GAS,
         )
+    }
+
+    pub fn remove_link(&mut self, public_key: PublicKey) -> Promise {
+        let account_id = self.links.get(&public_key).expect("ERR_NO_LINK");
+        assert_eq!(
+            account_id,
+            env::predecessor_account_id(),
+            "ERR_NOT_LINK_OWNER"
+        );
+        self.internal_remove_link(env::predecessor_account_id(), public_key)
+    }
+
+    /// Only can be called by the access key on this contract.
+    /// Can be added via create_link.
+    pub fn create_account(&mut self, account_id: AccountId, public_key: PublicKey) -> Promise {
+        assert_eq!(env::predecessor_account_id(), env::current_account_id());
+        Promise::new(AccountId::new_unchecked(NEAR_ACCOUNT.to_string()))
+            .function_call(
+                "create_account".to_string(),
+                format!(
+                    "{{\"new_account_id\": \"{}\", \"new_public_key\": \"{:?}\"}}",
+                    account_id, public_key
+                )
+                .into_bytes(),
+                CREATE_ACCOUNT_AMOUNT,
+                CREATE_ACCOUNT_GAS,
+            )
+            .then(ext_self::on_create_account(
+                account_id,
+                env::current_account_id(),
+                NO_DEPOSIT,
+                ON_CREATE_ACCOUNT_GAS,
+            ))
+    }
+
+    /// Callback after account was created by near.
+    /// Add an internal account with referrer and remove the link info.
+    pub fn on_create_account(&mut self, new_account_id: AccountId) -> Promise {
+        assert_eq!(env::predecessor_account_id(), env::current_account_id());
+        let referrer = self
+            .links
+            .get(&env::signer_account_pk())
+            .expect("ERR_NO_LINK");
+        self.accounts
+            .insert(&new_account_id, &Account::new(&new_account_id, &referrer));
+        self.internal_remove_link(env::predecessor_account_id(), env::signer_account_pk())
     }
 
     #[payable]
@@ -73,12 +165,8 @@ impl Contract {
             "ERR_ACCOUNT_EXISTS"
         );
         assert_eq!(env::attached_deposit(), self.join_fee, "ERR_FEE");
-        self.accounts.insert(
-            &account_id,
-            &Account {
-                referrer: self.owner_id.clone(),
-            },
-        );
+        self.accounts
+            .insert(&account_id, &Account::new(&account_id, &self.owner_id));
     }
 
     pub fn get_join_fee(&self) -> U128 {
@@ -106,19 +194,29 @@ impl Contract {
             .map(|index| (keys.get(index).unwrap(), values.get(index).unwrap().into()))
             .collect()
     }
+
+    pub fn get_link_referrer(&self, public_key: PublicKey) -> AccountId {
+        self.links.get(&public_key).expect("ERR_NO_KEY")
+    }
+
+    pub fn get_links(&self, account_id: AccountId) -> Vec<PublicKey> {
+        let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        account.links.to_vec()
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
     use near_sdk::{serde_json, testing_env, PromiseResult};
 
     use crate::sale::SaleInput;
+    use crate::token_receiver::SaleDeposit;
 
     use super::*;
-    use crate::token_receiver::SaleDeposit;
-    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+    use std::str::FromStr;
 
     fn contract_with_sale() -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
@@ -174,8 +272,9 @@ mod tests {
         assert_eq!(contract.get_sale(0).num_account_sales, 1);
         assert_eq!(contract.get_sale(0).collected_amount.0, 100);
 
-        assert_eq!(contract.get_num_accounts(), 1);
-        assert_eq!(contract.get_accounts(0, 10).len(), 1);
+        assert_eq!(contract.get_num_accounts(), 2);
+        assert_eq!(contract.get_accounts(0, 10).len(), 2);
+        assert_eq!(contract.get_account(accounts(2)).referrer, accounts(0));
     }
 
     #[test]
@@ -205,5 +304,22 @@ mod tests {
             U128(100),
             serde_json::to_string(&SaleDeposit { sale_id: 1 }).unwrap(),
         );
+    }
+
+    #[test]
+    fn test_create_remove_link() {
+        let (mut context, mut contract) = contract_with_sale();
+        testing_env!(context
+            .predecessor_account_id(accounts(2))
+            .attached_deposit(1000000)
+            .build());
+        contract.join();
+        testing_env!(context
+            .predecessor_account_id(accounts(2))
+            .attached_deposit(CREATE_LINK_AMOUNT)
+            .build());
+        let pk = PublicKey::from_str("qSq3LoufLvTCTNGC3LJePMDGrok8dHMQ5A1YD9psbiz").unwrap();
+        contract.create_link(pk.clone());
+        contract.remove_link(pk);
     }
 }
