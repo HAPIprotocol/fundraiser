@@ -1,5 +1,5 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LookupMap;
+use near_sdk::collections::{LookupMap, UnorderedMap};
 use near_sdk::json_types::U128;
 use near_sdk::{env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, Promise, PublicKey};
 
@@ -34,7 +34,7 @@ struct Contract {
     owner_id: AccountId,
     join_fee: Balance,
     referral_fees: Vec<u64>,
-    accounts: LookupMap<AccountId, Account>,
+    accounts: UnorderedMap<AccountId, Account>,
     sales: LookupMap<u64, VSale>,
     num_sales: u64,
 }
@@ -46,7 +46,7 @@ impl Contract {
             owner_id,
             join_fee: join_fee.0,
             referral_fees,
-            accounts: LookupMap::new(StorageKey::Accounts),
+            accounts: UnorderedMap::new(StorageKey::Accounts),
             sales: LookupMap::new(StorageKey::Sales),
             num_sales: 0,
         }
@@ -94,6 +94,18 @@ impl Contract {
             .get(&account_id)
             .expect("ERR_ACCOUNT_DOESNT_EXIST")
     }
+
+    pub fn get_num_accounts(&self) -> u64 {
+        self.accounts.len()
+    }
+
+    pub fn get_accounts(&self, from_index: u64, limit: u64) -> Vec<(AccountId, Account)> {
+        let keys = self.accounts.keys_as_vector();
+        let values = self.accounts.values_as_vector();
+        (from_index..std::cmp::min(from_index + limit, keys.len()))
+            .map(|index| (keys.get(index).unwrap(), values.get(index).unwrap().into()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -111,7 +123,9 @@ mod tests {
     fn contract_with_sale() -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.predecessor_account_id(accounts(0)).build());
-        let mut contract = Contract::new(accounts(0), U128(1_000_000), vec![10, 20, 30]);
+        let join_fee = U128(1_000_000);
+        let referral_fees = vec![10, 20, 30];
+        let mut contract = Contract::new(accounts(0), join_fee, referral_fees.clone());
         contract.create_sale(SaleInput {
             staking_contract: Some(AccountId::new_unchecked("test.staking".to_string())),
             min_near_deposit: U128(100),
@@ -122,6 +136,8 @@ mod tests {
             price: U128(1000),
             whitelist_hash: None,
         });
+        assert_eq!(contract.get_referral_fees(), referral_fees);
+        assert_eq!(contract.get_join_fee(), join_fee);
         (context, contract)
     }
 
@@ -137,6 +153,7 @@ mod tests {
             .attached_deposit(1000000)
             .build());
         contract.join();
+        assert_eq!(contract.get_account(accounts(2)).referrer, accounts(0));
 
         testing_env!(context.predecessor_account_id(accounts(1)).build());
         contract.ft_on_transfer(
@@ -156,6 +173,9 @@ mod tests {
 
         assert_eq!(contract.get_sale(0).num_account_sales, 1);
         assert_eq!(contract.get_sale(0).collected_amount.0, 100);
+
+        assert_eq!(contract.get_num_accounts(), 1);
+        assert_eq!(contract.get_accounts(0, 10).len(), 1);
     }
 
     #[test]
