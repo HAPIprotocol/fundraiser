@@ -1,7 +1,10 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::json_types::U128;
-use near_sdk::{env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, Promise, PublicKey};
+use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{
+    env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise, PublicKey,
+};
 
 use crate::sale::VSale;
 use crate::token_receiver::ext_self;
@@ -29,6 +32,20 @@ struct Account {
     links: UnorderedSet<PublicKey>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+struct AccountOutput {
+    referrer: AccountId,
+}
+
+impl From<Account> for AccountOutput {
+    fn from(account: Account) -> Self {
+        Self {
+            referrer: account.referrer,
+        }
+    }
+}
+
 impl Account {
     pub fn new(account_id: &AccountId, referrer: &AccountId) -> Self {
         Self {
@@ -50,6 +67,7 @@ pub(crate) enum StorageKey {
 }
 
 #[near_bindgen]
+#[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
 struct Contract {
     owner_id: AccountId,
     join_fee: Balance,
@@ -72,6 +90,7 @@ impl Contract {
 
 #[near_bindgen]
 impl Contract {
+    #[init]
     pub fn new(owner_id: AccountId, join_fee: U128, referral_fees: Vec<u64>) -> Self {
         let mut this = Self {
             owner_id,
@@ -176,17 +195,18 @@ impl Contract {
         self.referral_fees.clone()
     }
 
-    pub fn get_account(&self, account_id: AccountId) -> Account {
+    pub fn get_account(&self, account_id: AccountId) -> AccountOutput {
         self.accounts
             .get(&account_id)
             .expect("ERR_ACCOUNT_DOESNT_EXIST")
+            .into()
     }
 
     pub fn get_num_accounts(&self) -> u64 {
         self.accounts.len()
     }
 
-    pub fn get_accounts(&self, from_index: u64, limit: u64) -> Vec<(AccountId, Account)> {
+    pub fn get_accounts(&self, from_index: u64, limit: u64) -> Vec<(AccountId, AccountOutput)> {
         let keys = self.accounts.keys_as_vector();
         let values = self.accounts.values_as_vector();
         (from_index..std::cmp::min(from_index + limit, keys.len()))
@@ -218,7 +238,11 @@ mod tests {
     use near_sdk::json_types::U64;
     use std::str::FromStr;
 
-    fn contract_with_sale() -> (VMContextBuilder, Contract) {
+    fn contract_with_sale_info(
+        max_amount: Option<Balance>,
+        start_date: u64,
+        end_date: u64,
+    ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.predecessor_account_id(accounts(0)).build());
         let join_fee = U128(1_000_000);
@@ -230,15 +254,40 @@ mod tests {
             deposit_token_id: accounts(1),
             min_buy: U128(100),
             max_buy: U128(10000),
-            max_amount: Some(U128(10000)),
-            start_date: U64(0),
-            end_date: U64(1_000_000_000),
+            max_amount: max_amount.map(|a| U128(a)),
+            start_date: U64(start_date),
+            end_date: U64(end_date),
             price: U128(1000),
             whitelist_hash: None,
         });
         assert_eq!(contract.get_referral_fees(), referral_fees);
         assert_eq!(contract.get_join_fee(), join_fee);
         (context, contract)
+    }
+
+    fn contract_with_sale() -> (VMContextBuilder, Contract) {
+        contract_with_sale_info(Some(10000), 0, 1_000_000_000)
+    }
+
+    fn register_account(
+        context: &mut VMContextBuilder,
+        contract: &mut Contract,
+        account_id: AccountId,
+    ) {
+        testing_env!(context
+            .predecessor_account_id(account_id)
+            .attached_deposit(1000000)
+            .build());
+        contract.join();
+    }
+
+    fn deposit(context: &mut VMContextBuilder, contract: &mut Contract, account_id: AccountId) {
+        testing_env!(context.predecessor_account_id(accounts(1)).build());
+        contract.ft_on_transfer(
+            account_id,
+            U128(100),
+            serde_json::to_string(&SaleDeposit { sale_id: 0 }).unwrap(),
+        );
     }
 
     #[test]
@@ -323,5 +372,29 @@ mod tests {
         let pk = PublicKey::from_str("qSq3LoufLvTCTNGC3LJePMDGrok8dHMQ5A1YD9psbiz").unwrap();
         contract.create_link(pk.clone());
         contract.remove_link(pk);
+    }
+
+    #[test]
+    #[should_panic = "ERR_SALE_NOT_STARTED"]
+    fn test_sale_too_early() {
+        let (mut context, mut contract) = contract_with_sale_info(None, 1_000, 1_000_000);
+        register_account(&mut context, &mut contract, accounts(2));
+        deposit(&mut context, &mut contract, accounts(2));
+    }
+
+    #[test]
+    #[should_panic = "ERR_SALE_DONE"]
+    fn test_sale_too_late() {
+        let (mut context, mut contract) = contract_with_sale_info(None, 1_000, 1_000_000);
+        register_account(&mut context, &mut contract, accounts(2));
+        testing_env!(context
+            .block_timestamp(1_000_001)
+            .predecessor_account_id(accounts(1))
+            .build());
+        contract.ft_on_transfer(
+            accounts(2),
+            U128(100),
+            serde_json::to_string(&SaleDeposit { sale_id: 0 }).unwrap(),
+        );
     }
 }
