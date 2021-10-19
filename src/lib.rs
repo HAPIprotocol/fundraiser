@@ -9,7 +9,6 @@ use crate::token_receiver::ext_self;
 mod sale;
 mod token_receiver;
 
-pub(crate) const ONE_YOCTO: Balance = 1;
 pub(crate) const ONE_NEAR: Balance = 10u128.pow(24);
 
 const BASE_GAS: Gas = Gas(5_000_000_000_000);
@@ -216,6 +215,7 @@ mod tests {
     use crate::token_receiver::SaleDeposit;
 
     use super::*;
+    use near_sdk::json_types::U64;
     use std::str::FromStr;
 
     fn contract_with_sale() -> (VMContextBuilder, Contract) {
@@ -230,7 +230,9 @@ mod tests {
             deposit_token_id: accounts(1),
             min_buy: U128(100),
             max_buy: U128(10000),
-            max_amount: U128(10000),
+            max_amount: Some(U128(10000)),
+            start_date: U64(0),
+            end_date: U64(1_000_000_000),
             price: U128(1000),
             whitelist_hash: None,
         });

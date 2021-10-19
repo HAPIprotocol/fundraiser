@@ -1,8 +1,8 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{AccountId, Balance, CryptoHash, PromiseOrValue, log};
+use near_sdk::{AccountId, Balance, CryptoHash, PromiseOrValue, log, Timestamp};
 
 use crate::*;
 
@@ -15,7 +15,9 @@ pub struct SaleInput {
     pub deposit_token_id: AccountId,
     pub min_buy: U128,
     pub max_buy: U128,
-    pub max_amount: U128,
+    pub max_amount: Option<U128>,
+    pub start_date: U64,
+    pub end_date: U64,
     pub price: U128,
     pub whitelist_hash: Option<CryptoHash>,
 }
@@ -28,7 +30,9 @@ pub struct SaleOutput {
     pub deposit_token_id: AccountId,
     pub min_buy: U128,
     pub max_buy: U128,
-    pub max_amount: U128,
+    pub max_amount: Option<U128>,
+    pub start_date: U64,
+    pub end_date: U64,
     pub price: U128,
     pub whitelist_hash: Option<CryptoHash>,
     pub collected_amount: U128,
@@ -48,7 +52,9 @@ pub struct Sale {
     pub deposit_token_id: AccountId,
     pub min_buy: Balance,
     pub max_buy: Balance,
-    pub max_amount: Balance,
+    pub max_amount: Option<Balance>,
+    pub start_date: Timestamp,
+    pub end_date: Timestamp,
     pub price: Balance,
     pub whitelist_hash: Option<CryptoHash>,
 
@@ -73,7 +79,9 @@ impl From<VSale> for SaleOutput {
                 deposit_token_id: sale.deposit_token_id,
                 min_buy: U128(sale.min_buy),
                 max_buy: U128(sale.max_buy),
-                max_amount: U128(sale.max_amount),
+                max_amount: sale.max_amount.map(|amount| U128(amount)),
+                start_date: U64(sale.start_date),
+                end_date: U64(sale.end_date),
                 price: U128(sale.price),
                 whitelist_hash: sale.whitelist_hash,
                 collected_amount: U128(sale.collected_amount),
@@ -91,7 +99,9 @@ impl VSale {
             deposit_token_id: sale_input.deposit_token_id,
             min_buy: sale_input.min_buy.0,
             max_buy: sale_input.max_buy.0,
-            max_amount: sale_input.max_amount.0,
+            max_amount: sale_input.max_amount.map(|amount| amount.0),
+            start_date: sale_input.start_date.0,
+            end_date: sale_input.end_date.0,
             price: sale_input.price.0,
             whitelist_hash: sale_input.whitelist_hash,
             collected_amount: 0,
@@ -136,8 +146,12 @@ impl Contract {
             staked_amount >= sale.min_near_deposit,
             "ERR_NOT_ENOUGH_STAKED"
         );
-        // TODO: add check for the whitelist.
-        let deposit_amount = std::cmp::min(amount, sale.max_amount - sale.collected_amount);
+        // TODO: add check for the whitelist hash.
+        let deposit_amount = if let Some(max_amount) = sale.max_amount {
+            std::cmp::min(amount, max_amount - sale.collected_amount)
+        } else {
+            amount
+        };
         let mut account_sale = sale
             .account_sales
             .get(&sender_id)

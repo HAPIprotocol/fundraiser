@@ -65,7 +65,15 @@ impl FungibleTokenReceiver for Contract {
             env::predecessor_account_id(),
             "ERR_WRONG_TOKEN"
         );
-        assert!(sale.collected_amount < sale.max_amount, "ERR_SALE_DONE");
+        if let Some(max_amount) = sale.max_amount {
+            assert!(sale.collected_amount < max_amount, "ERR_SALE_DONE");
+        }
+        let timestamp = env::block_timestamp();
+        assert!(timestamp >= sale.start_date, "ERR_SALE_NOT_STARTED");
+        assert!(
+            timestamp >= sale.start_date && timestamp <= sale.end_date,
+            "ERR_SALE_DONE"
+        );
 
         // Send call to check how much is staked.
         if let Some(staking_contract) = sale.staking_contract {
