@@ -31,13 +31,23 @@ near call dev-1634658127682-97093903837694 mint '{"account_id": "dev-16346578761
 Next steps dev-deploy the contract:
 
 ```
+./build_local.sh
+
 near dev-deploy --wasmFile=res/fundraiser_local.wasm
 
 near call dev-1634657876145-24893242863336 new '{"owner_id": "dev-1634657876145-24893242863336", "join_fee": "100000", "referral_fees": [10, 20, 30]}' --accountId dev-1634657876145-24893242863336
 ```
 
+Replace `dev-1634657876145-24893242863336` with what dev-deploy command will output.
+
 Create new sale with the token above:
 
 ```
-near call dev-1634657876145-24893242863336 create_sale '{"min_near_deposit": "0", "deposit_token_id": "dev-1634658127682-97093903837694", "min_buy": "1", "max_buy": "10000", "start_date": "10000000", "end_date": "100000000", "price": "1000"}' --accountId dev-1634657876145-24893242863336 
+near call dev-1634657876145-24893242863336 create_sale '{"sale": {"metadata": {"name": "test", "symbol": "TEST", "description": "test", "logo_url": "", "smart_contract_url": ""}, "min_near_deposit": "0", "deposit_token_id": "dev-1634658127682-97093903837694", "min_buy": "1", "max_buy": "10000", "start_date": "10000000", "end_date": "100000000", "price": "1000"}}' --accountId dev-1634657876145-24893242863336
+```
+
+View sale info:
+
+```
+near view dev-1634657876145-24893242863336 get_sale '{"sale_id": 2}'
 ```

@@ -6,25 +6,52 @@ use near_sdk::{AccountId, Balance, CryptoHash, PromiseOrValue, log, Timestamp};
 
 use crate::*;
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct SaleMetadata {
+    /// Project name that is going to be on sale.
+    pub name: String,
+    /// Symbol (ticker) for the token on sale.
+    pub symbol: String,
+    /// Project description.
+    pub description: String,
+    /// Link to project smart contract.
+    pub smart_contract_url: String,
+    /// Project logo.
+    pub logo_url: String,
+}
+
 /// Sale information for creating new sale.
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleInput {
+    pub metadata: SaleMetadata,
+    /// Staking contract that will be checked if user has staked with it.
     pub staking_contract: Option<AccountId>,
+    /// Minimum NEAR staked in the above staking contract.
     pub min_near_deposit: U128,
+    /// Token to sell for.
     pub deposit_token_id: AccountId,
+    /// Minimum amount of deposit token.
     pub min_buy: U128,
+    /// Maximum amount of deposit token for one account.
     pub max_buy: U128,
+    /// Maximum amount that can be collected by the sale.
     pub max_amount: Option<U128>,
+    /// Start date of the sale.
     pub start_date: U64,
+    /// End date of the sale.
     pub end_date: U64,
+    /// Price per a single token in decimals of the deposit token.
     pub price: U128,
+    /// Hash of the merkle tree of whitelisted accounts.
     pub whitelist_hash: Option<CryptoHash>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleOutput {
+    pub metadata: SaleMetadata,
     pub staking_contract: Option<AccountId>,
     pub min_near_deposit: U128,
     pub deposit_token_id: AccountId,
@@ -47,6 +74,7 @@ pub enum VSale {
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Sale {
+    pub metadata: SaleMetadata,
     pub staking_contract: Option<AccountId>,
     pub min_near_deposit: Balance,
     pub deposit_token_id: AccountId,
@@ -74,6 +102,7 @@ impl From<VSale> for SaleOutput {
     fn from(v_sale: VSale) -> Self {
         match v_sale {
             VSale::Current(sale) => SaleOutput {
+                metadata: sale.metadata,
                 staking_contract: sale.staking_contract,
                 min_near_deposit: U128(sale.min_near_deposit),
                 deposit_token_id: sale.deposit_token_id,
@@ -94,6 +123,7 @@ impl From<VSale> for SaleOutput {
 impl VSale {
     pub fn new(sale_id: u64, sale_input: SaleInput) -> Self {
         Self::Current(Sale {
+            metadata: sale_input.metadata,
             staking_contract: sale_input.staking_contract,
             min_near_deposit: sale_input.min_near_deposit.0,
             deposit_token_id: sale_input.deposit_token_id,
@@ -173,7 +203,7 @@ impl Contract {
 
 #[near_bindgen]
 impl Contract {
-    pub fn create_sale(&mut self, sale: SaleInput) {
+    pub fn create_sale(&mut self, sale: SaleInput) -> u64 {
         assert_eq!(
             self.owner_id,
             env::predecessor_account_id(),
@@ -182,6 +212,7 @@ impl Contract {
         self.sales
             .insert(&self.num_sales, &VSale::new(self.num_sales, sale));
         self.num_sales += 1;
+        self.num_sales
     }
 
     pub fn get_num_sales(&self) -> u64 {

@@ -231,7 +231,7 @@ mod tests {
     use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
     use near_sdk::{serde_json, testing_env, PromiseResult};
 
-    use crate::sale::SaleInput;
+    use crate::sale::{SaleInput, SaleMetadata};
     use crate::token_receiver::SaleDeposit;
 
     use super::*;
@@ -249,6 +249,13 @@ mod tests {
         let referral_fees = vec![10, 20, 30];
         let mut contract = Contract::new(accounts(0), join_fee, referral_fees.clone());
         contract.create_sale(SaleInput {
+            metadata: SaleMetadata {
+                name: "test".to_string(),
+                symbol: "TEST".to_string(),
+                description: "".to_string(),
+                smart_contract_url: "".to_string(),
+                logo_url: "".to_string(),
+            },
             staking_contract: Some(AccountId::new_unchecked("test.staking".to_string())),
             min_near_deposit: U128(100),
             deposit_token_id: accounts(1),
