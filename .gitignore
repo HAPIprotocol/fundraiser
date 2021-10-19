@@ -1,3 +1,5 @@
 target/
 .idea
 res/fundraiser_local.wasm
+neardev/
+

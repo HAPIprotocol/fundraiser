@@ -18,3 +18,26 @@ This contract doesn't handle sales distribution process, instead leaving this to
 Owner will be able to extra the table of all the users and how much they have deposited for the given sale.
 After that, owner should airdrop the tokens according to whatever other rules (referral, whitelists, etc).
 Referral map of account creations can be extracted as well by listing all the users or queried for specific user.
+
+# Testing
+
+We are going to use `dev-1634658127682-97093903837694` test token as a deposit token.
+To mint yourself some of it call:
+
+```
+near call dev-1634658127682-97093903837694 mint '{"account_id": "dev-1634657876145-24893242863336", "amount": "10000000000000"}' --accountId dev-1634657876145-24893242863336
+```
+
+Next steps dev-deploy the contract:
+
+```
+near dev-deploy --wasmFile=res/fundraiser_local.wasm
+
+near call dev-1634657876145-24893242863336 new '{"owner_id": "dev-1634657876145-24893242863336", "join_fee": "100000", "referral_fees": [10, 20, 30]}' --accountId dev-1634657876145-24893242863336
+```
+
+Create new sale with the token above:
+
+```
+near call dev-1634657876145-24893242863336 create_sale '{"min_near_deposit": "0", "deposit_token_id": "dev-1634658127682-97093903837694", "min_buy": "1", "max_buy": "10000", "start_date": "10000000", "end_date": "100000000", "price": "1000"}' --accountId dev-1634657876145-24893242863336 
+```
