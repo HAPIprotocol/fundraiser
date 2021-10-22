@@ -26,8 +26,9 @@ pub struct SaleMetadata {
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleInput {
     pub metadata: SaleMetadata,
-    /// Staking contract that will be checked if user has staked with it.
-    pub staking_contract: Option<AccountId>,
+    /// Set of staking contract that will be checked if user has staked with it.
+    /// Empty if staking is not required for this sale.
+    pub staking_contracts: Vec<AccountId>,
     /// Minimum NEAR staked in the above staking contract.
     pub min_near_deposit: U128,
     /// Token to sell for.
@@ -38,6 +39,9 @@ pub struct SaleInput {
     pub max_buy: U128,
     /// Maximum amount that can be collected by the sale.
     pub max_amount: Option<U128>,
+    /// Max amount is hard requirement or not.
+    /// If true, max_amount must be provided.
+    pub hard_max_amount_limit: bool,
     /// Start date of the sale.
     pub start_date: U64,
     /// End date of the sale.
@@ -52,12 +56,13 @@ pub struct SaleInput {
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleOutput {
     pub metadata: SaleMetadata,
-    pub staking_contract: Option<AccountId>,
+    pub staking_contracts: Vec<AccountId>,
     pub min_near_deposit: U128,
     pub deposit_token_id: AccountId,
     pub min_buy: U128,
     pub max_buy: U128,
     pub max_amount: Option<U128>,
+    pub hard_max_amount_limit: bool,
     pub start_date: U64,
     pub end_date: U64,
     pub price: U128,
@@ -75,12 +80,13 @@ pub enum VSale {
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Sale {
     pub metadata: SaleMetadata,
-    pub staking_contract: Option<AccountId>,
+    pub staking_contracts: Vec<AccountId>,
     pub min_near_deposit: Balance,
     pub deposit_token_id: AccountId,
     pub min_buy: Balance,
     pub max_buy: Balance,
     pub max_amount: Option<Balance>,
+    pub hard_max_amount_limit: bool,
     pub start_date: Timestamp,
     pub end_date: Timestamp,
     pub price: Balance,
@@ -103,12 +109,13 @@ impl From<VSale> for SaleOutput {
         match v_sale {
             VSale::Current(sale) => SaleOutput {
                 metadata: sale.metadata,
-                staking_contract: sale.staking_contract,
+                staking_contracts: sale.staking_contracts,
                 min_near_deposit: U128(sale.min_near_deposit),
                 deposit_token_id: sale.deposit_token_id,
                 min_buy: U128(sale.min_buy),
                 max_buy: U128(sale.max_buy),
                 max_amount: sale.max_amount.map(|amount| U128(amount)),
+                hard_max_amount_limit: sale.hard_max_amount_limit,
                 start_date: U64(sale.start_date),
                 end_date: U64(sale.end_date),
                 price: U128(sale.price),
@@ -124,12 +131,13 @@ impl VSale {
     pub fn new(sale_id: u64, sale_input: SaleInput) -> Self {
         Self::Current(Sale {
             metadata: sale_input.metadata,
-            staking_contract: sale_input.staking_contract,
+            staking_contracts: sale_input.staking_contracts,
             min_near_deposit: sale_input.min_near_deposit.0,
             deposit_token_id: sale_input.deposit_token_id,
             min_buy: sale_input.min_buy.0,
             max_buy: sale_input.max_buy.0,
             max_amount: sale_input.max_amount.map(|amount| amount.0),
+            hard_max_amount_limit: sale_input.hard_max_amount_limit,
             start_date: sale_input.start_date.0,
             end_date: sale_input.end_date.0,
             price: sale_input.price.0,
@@ -178,10 +186,10 @@ impl Contract {
             "ERR_NOT_ENOUGH_STAKED"
         );
         // TODO: add check for the whitelist hash.
-        let deposit_amount = if let Some(max_amount) = sale.max_amount {
-            std::cmp::min(amount, max_amount - sale.collected_amount)
-        } else {
+        let deposit_amount = if !sale.hard_max_amount_limit {
             amount
+        } else {
+            std::cmp::min(amount, sale.max_amount.expect("ERR_MUST_HAVE_MAX_AMOUNT") - sale.collected_amount)
         };
         let mut account_sale = sale
             .account_sales
@@ -209,6 +217,7 @@ impl Contract {
             env::predecessor_account_id(),
             "ERR_MUST_BE_OWNER"
         );
+        assert!(!sale.hard_max_amount_limit || (sale.hard_max_amount_limit && sale.max_amount.is_some()), "ERR_MUST_HAVE_MAX_AMOUNT");
         self.sales
             .insert(&self.num_sales, &VSale::new(self.num_sales, sale));
         self.num_sales += 1;

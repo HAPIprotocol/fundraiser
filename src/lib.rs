@@ -256,12 +256,13 @@ mod tests {
                 smart_contract_url: "".to_string(),
                 logo_url: "".to_string(),
             },
-            staking_contract: Some(AccountId::new_unchecked("test.staking".to_string())),
+            staking_contracts: vec![AccountId::new_unchecked("test.staking".to_string())],
             min_near_deposit: U128(100),
             deposit_token_id: accounts(1),
             min_buy: U128(100),
             max_buy: U128(10000),
             max_amount: max_amount.map(|a| U128(a)),
+            hard_max_amount_limit: max_amount.is_some(),
             start_date: U64(start_date),
             end_date: U64(end_date),
             price: U128(1000),
@@ -293,7 +294,11 @@ mod tests {
         contract.ft_on_transfer(
             account_id,
             U128(100),
-            serde_json::to_string(&SaleDeposit { sale_id: 0 }).unwrap(),
+            serde_json::to_string(&SaleDeposit {
+                sale_id: 0,
+                staking_contract: None,
+            })
+            .unwrap(),
         );
     }
 
@@ -315,7 +320,11 @@ mod tests {
         contract.ft_on_transfer(
             accounts(2),
             U128(100),
-            serde_json::to_string(&SaleDeposit { sale_id: 0 }).unwrap(),
+            serde_json::to_string(&SaleDeposit {
+                sale_id: 0,
+                staking_contract: Some(AccountId::new_unchecked("test.staking".to_string())),
+            })
+            .unwrap(),
         );
 
         testing_env_with_promise_results(
@@ -343,7 +352,11 @@ mod tests {
         contract.ft_on_transfer(
             accounts(2),
             U128(100),
-            serde_json::to_string(&SaleDeposit { sale_id: 0 }).unwrap(),
+            serde_json::to_string(&SaleDeposit {
+                sale_id: 0,
+                staking_contract: None,
+            })
+            .unwrap(),
         );
     }
 
@@ -360,7 +373,11 @@ mod tests {
         contract.ft_on_transfer(
             accounts(2),
             U128(100),
-            serde_json::to_string(&SaleDeposit { sale_id: 1 }).unwrap(),
+            serde_json::to_string(&SaleDeposit {
+                sale_id: 1,
+                staking_contract: None,
+            })
+            .unwrap(),
         );
     }
 
@@ -401,7 +418,11 @@ mod tests {
         contract.ft_on_transfer(
             accounts(2),
             U128(100),
-            serde_json::to_string(&SaleDeposit { sale_id: 0 }).unwrap(),
+            serde_json::to_string(&SaleDeposit {
+                sale_id: 0,
+                staking_contract: None,
+            })
+            .unwrap(),
         );
     }
 }

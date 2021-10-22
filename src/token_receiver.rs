@@ -36,6 +36,8 @@ pub trait ExtContract {
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleDeposit {
     pub sale_id: u64,
+    /// Optional argument to point to the contract where this user has staked if sale requires this.
+    pub staking_contract: Option<AccountId>,
 }
 
 #[near_bindgen]
@@ -65,8 +67,11 @@ impl FungibleTokenReceiver for Contract {
             env::predecessor_account_id(),
             "ERR_WRONG_TOKEN"
         );
-        if let Some(max_amount) = sale.max_amount {
-            assert!(sale.collected_amount < max_amount, "ERR_SALE_DONE");
+        if sale.hard_max_amount_limit {
+            assert!(
+                sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
+                "ERR_SALE_DONE"
+            );
         }
         let timestamp = env::block_timestamp();
         assert!(timestamp >= sale.start_date, "ERR_SALE_NOT_STARTED");
@@ -75,8 +80,15 @@ impl FungibleTokenReceiver for Contract {
             "ERR_SALE_DONE"
         );
 
-        // Send call to check how much is staked.
-        if let Some(staking_contract) = sale.staking_contract {
+        // Send call to check how much is staked if staking is required.
+        if sale.staking_contracts.len() > 0 {
+            let staking_contract = message
+                .staking_contract
+                .expect("ERR_MUST_HAVE_STAKING_CONTRACT");
+            assert!(
+                sale.staking_contracts.contains(&staking_contract),
+                "ERR_NOT_WHITELISTED_STAKING_CONTRACT"
+            );
             PromiseOrValue::Promise(
                 ext_staking_pool::get_account_staked_balance(
                     sender_id.clone(),
