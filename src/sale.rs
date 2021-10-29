@@ -19,6 +19,12 @@ pub struct SaleMetadata {
     pub smart_contract_url: String,
     /// Project logo.
     pub logo_url: String,
+    /// Symbol for output token
+    pub output_ticker: String,
+    /// Social medias of the project
+    pub project_telegram: Option<String>,
+    pub project_medium: Option<String>,
+    pub project_twitter: Option<String>,
 }
 
 /// Sale information for creating new sale.
@@ -50,6 +56,8 @@ pub struct SaleInput {
     pub price: U128,
     /// Hash of the merkle tree of whitelisted accounts.
     pub whitelist_hash: Option<CryptoHash>,
+    /// Limit per transaction
+    pub limit_per_transaction: U128,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,6 +75,7 @@ pub struct SaleOutput {
     pub end_date: U64,
     pub price: U128,
     pub whitelist_hash: Option<CryptoHash>,
+    pub limit_per_transaction: U128,
     pub collected_amount: U128,
     pub num_account_sales: u64,
 }
@@ -91,6 +100,7 @@ pub struct Sale {
     pub end_date: Timestamp,
     pub price: Balance,
     pub whitelist_hash: Option<CryptoHash>,
+    pub limit_per_transaction: Balance,
 
     pub collected_amount: Balance,
     pub account_sales: UnorderedMap<AccountId, VSaleAccount>,
@@ -120,6 +130,7 @@ impl From<VSale> for SaleOutput {
                 end_date: U64(sale.end_date),
                 price: U128(sale.price),
                 whitelist_hash: sale.whitelist_hash,
+                limit_per_transaction: sale.limit_per_transaction.into(),
                 collected_amount: U128(sale.collected_amount),
                 num_account_sales: sale.account_sales.keys_as_vector().len(),
             },
@@ -142,6 +153,7 @@ impl VSale {
             end_date: sale_input.end_date.0,
             price: sale_input.price.0,
             whitelist_hash: sale_input.whitelist_hash,
+            limit_per_transaction: sale_input.limit_per_transaction.into(),
             collected_amount: 0,
             account_sales: UnorderedMap::new(StorageKey::AccountSales { sale_id }),
         })
@@ -182,6 +194,10 @@ impl Contract {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
         assert_eq!(&sale.deposit_token_id, token_id, "ERR_WRONG_TOKEN");
         assert!(
+            amount <= sale.limit_per_transaction,
+            "ERR_LIMIT_PER_TX"
+        );
+        assert!(
             staked_amount >= sale.min_near_deposit,
             "ERR_NOT_ENOUGH_STAKED"
         );
@@ -220,8 +236,9 @@ impl Contract {
         assert!(!sale.hard_max_amount_limit || (sale.hard_max_amount_limit && sale.max_amount.is_some()), "ERR_MUST_HAVE_MAX_AMOUNT");
         self.sales
             .insert(&self.num_sales, &VSale::new(self.num_sales, sale));
+        let sale_id = self.num_sales;
         self.num_sales += 1;
-        self.num_sales
+        sale_id
     }
 
     pub fn get_num_sales(&self) -> u64 {
