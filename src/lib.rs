@@ -1,13 +1,13 @@
+use near_sdk::{
+    AccountId,
+    Balance, BorshStorageKey, env, ext_contract, Gas, near_bindgen, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
+};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{
-    env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise, PublicKey,
-};
 
 use crate::sale::VSale;
-use crate::token_receiver::ext_self;
 
 mod sale;
 mod token_receiver;
@@ -25,6 +25,50 @@ const CREATE_ACCOUNT_AMOUNT: Balance = ONE_NEAR / 100;
 
 const REFERRAL_FEE_DENOMINATOR: u128 = 10000;
 const NEAR_ACCOUNT: &str = "near";
+const WRAP_NEAR_ACCOUNT: &str = "wrap.testnet";
+
+#[ext_contract(ext_self)]
+pub trait ExtContract {
+    /// Callback from checking staked balance of the given user.
+    fn on_get_account_staked_balance(
+        &mut self,
+        sale_id: u64,
+        token_id: AccountId,
+        sender_id: AccountId,
+        deposit_amount: U128,
+    ) -> PromiseOrValue<U128>;
+
+    /// Callback from checking staked balance of the given user doing NEAR deposit.
+    fn on_get_account_staked_balance_on_near_deposit(
+        &mut self,
+        sale_id: u64,
+        sender_id: AccountId,
+        deposit_amount: U128,
+    ) -> PromiseOrValue<U128>;
+
+    /// Callback after account creation.
+    fn on_create_account(&mut self, new_account_id: AccountId) -> Promise;
+
+    /// Callback after account creation
+    fn on_near_deposit(
+        &mut self,
+        sale_id: u64,
+        sender_id: AccountId,
+        deposit_amount: U128) -> PromiseOrValue<U128>;
+
+    /// Callback after internal deposit
+    fn after_near_deposit(
+        &mut self,
+        sender_id: AccountId,
+        deposit_amount: U128) -> PromiseOrValue<U128>;
+
+    /// Callback after account creation
+    fn on_revert_near_deposit(
+        &mut self,
+        account_id: AccountId,
+        amount: U128) -> PromiseOrValue<bool>;
+}
+
 
 #[derive(BorshSerialize, BorshDeserialize)]
 struct Account {
@@ -226,17 +270,18 @@ impl Contract {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::{PromiseResult, serde_json, testing_env};
+    use near_sdk::json_types::U64;
     use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
-    use near_sdk::{serde_json, testing_env, PromiseResult};
+    use near_sdk::test_utils::VMContextBuilder;
 
     use crate::sale::{SaleInput, SaleMetadata};
     use crate::token_receiver::SaleDeposit;
 
     use super::*;
-    use near_sdk::json_types::U64;
-    use std::str::FromStr;
 
     fn contract_with_sale_info(
         max_amount: Option<Balance>,

@@ -1,6 +1,6 @@
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, ext_contract, serde_json, PromiseOrValue};
+use near_sdk::{env, ext_contract, serde_json};
 
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 
@@ -15,21 +15,6 @@ const NO_DEPOSIT: Balance = 0;
 pub trait ExtStakingPool {
     /// Check the staked balance of the given account.
     fn get_account_staked_balance(&self, account_id: AccountId) -> U128;
-}
-
-#[ext_contract(ext_self)]
-pub trait ExtContract {
-    /// Callback from checking staked balance of the given user.
-    fn on_get_account_staked_balance(
-        &mut self,
-        sale_id: u64,
-        token_id: AccountId,
-        sender_id: AccountId,
-        deposit_amount: U128,
-    ) -> PromiseOrValue<U128>;
-
-    /// Callback after account creation.
-    fn on_create_account(&mut self, new_account_id: AccountId) -> Promise;
 }
 
 #[derive(Serialize, Deserialize)]
