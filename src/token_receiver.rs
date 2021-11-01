@@ -25,33 +25,25 @@ pub struct SaleDeposit {
     pub staking_contract: Option<AccountId>,
 }
 
-#[near_bindgen]
-impl FungibleTokenReceiver for Contract {
-    /// Callback on receiving tokens by this contract.
-    /// Record the AccountSale for given Sale.
-    #[allow(unused_variables)]
-    fn ft_on_transfer(
+impl Contract {
+    pub fn internal_ft_on_transfer(
         &mut self,
+        token_id: AccountId,
         sender_id: AccountId,
         amount: U128,
-        msg: String,
+        sale_deposit: SaleDeposit,
     ) -> PromiseOrValue<U128> {
         // Check that account is registered.
         let _ = self
             .accounts
             .get(&sender_id)
             .expect("ERR_NOT_REGISTERED_ACCOUNT");
-        let message = serde_json::from_str::<SaleDeposit>(&msg).expect("ERR_MSG_WRONG_FORMAT");
         let sale: Sale = self
             .sales
-            .get(&message.sale_id)
+            .get(&sale_deposit.sale_id)
             .expect("ERR_NO_SALE")
             .into();
-        assert_eq!(
-            sale.deposit_token_id,
-            env::predecessor_account_id(),
-            "ERR_WRONG_TOKEN"
-        );
+        assert_eq!(sale.deposit_token_id, token_id, "ERR_WRONG_TOKEN");
         if sale.hard_max_amount_limit {
             assert!(
                 sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
@@ -67,7 +59,7 @@ impl FungibleTokenReceiver for Contract {
 
         // Send call to check how much is staked if staking is required.
         if sale.staking_contracts.len() > 0 {
-            let staking_contract = message
+            let staking_contract = sale_deposit
                 .staking_contract
                 .expect("ERR_MUST_HAVE_STAKING_CONTRACT");
             assert!(
@@ -82,8 +74,8 @@ impl FungibleTokenReceiver for Contract {
                     GAS_GET_ACCOUNT_STAKED_BALANCE,
                 )
                 .then(ext_self::on_get_account_staked_balance(
-                    message.sale_id,
-                    env::predecessor_account_id(),
+                    sale_deposit.sale_id,
+                    token_id,
                     sender_id,
                     amount,
                     env::current_account_id(),
@@ -93,12 +85,33 @@ impl FungibleTokenReceiver for Contract {
             )
         } else {
             PromiseOrValue::Value(U128(self.internal_sale_deposit(
-                message.sale_id,
-                &env::predecessor_account_id(),
+                sale_deposit.sale_id,
+                &token_id,
                 &sender_id,
                 0,
                 amount.0,
             )))
         }
+    }
+}
+
+#[near_bindgen]
+impl FungibleTokenReceiver for Contract {
+    /// Callback on receiving tokens by this contract.
+    /// Record the AccountSale for given Sale.
+    #[allow(unused_variables)]
+    fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        let sale_deposit = serde_json::from_str::<SaleDeposit>(&msg).expect("ERR_MSG_WRONG_FORMAT");
+        self.internal_ft_on_transfer(
+            env::predecessor_account_id(),
+            sender_id,
+            amount,
+            sale_deposit,
+        )
     }
 }

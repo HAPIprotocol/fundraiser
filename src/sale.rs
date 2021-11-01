@@ -1,28 +1,25 @@
-use near_sdk::{AccountId, Balance, CryptoHash, ext_contract, log, PromiseOrValue, PromiseResult, Timestamp};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{
+    ext_contract, log, AccountId, Balance, CryptoHash, PromiseError, PromiseOrValue, PromiseResult,
+    Timestamp,
+};
 
-use crate::*;
 use crate::token_receiver::*;
+use crate::*;
 
 const ONE_YOCTO: Balance = 1;
 const GAS_NEAR_DEPOSIT: Gas = BASE_GAS;
-const GAS_NEAR_UNWRAP: Gas = Gas(10_000_000_000_000);
-const GAS_NEAR_WITHDRAW: Gas = BASE_GAS;
-const GAS_AFTER_NEAR_DEPOSIT: Gas = Gas(40_000_000_000_000);
-const GAS_ON_NEAR_DEPOSIT: Gas = Gas(25_000_000_000_000);
+const GAS_AFTER_FT_ON_TRANSFER_NEAR_DEPOSIT: Gas = Gas(40_000_000_000_000);
 const GAS_GET_ACCOUNT_STAKED_BALANCE: Gas = Gas(25_000_000_000_000);
 const GAS_ON_GET_ACCOUNT_STAKED_BALANCE: Gas = Gas(25_000_000_000_000);
-
 
 #[ext_contract(ext_wrap_near)]
 pub trait ExtWrapNear {
     /// Deposit NEAR to mint wNEAR tokens to the predecessor account in this contract.
-    fn near_deposit(&self);
-    // Withdraws wNEAR and send NEAR back
-    fn near_withdraw(&self, amount: U128);
+    fn near_deposit(&mut self);
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -45,7 +42,7 @@ pub struct SaleMetadata {
     pub project_medium: Option<String>,
     pub project_twitter: Option<String>,
     pub reward_timestamp: Option<Timestamp>,
-    pub reward_description: Option<String>
+    pub reward_description: Option<String>,
 }
 
 /// Sale information for creating new sale.
@@ -201,7 +198,6 @@ impl From<VSaleAccount> for SaleAccount {
     }
 }
 
-#[near_bindgen]
 impl Contract {
     /// Validates deposit and records it for the given user for give sale.
     /// Returns extra amount if sale is already over capacity.
@@ -215,10 +211,7 @@ impl Contract {
     ) -> Balance {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
         assert_eq!(&sale.deposit_token_id, token_id, "ERR_WRONG_TOKEN");
-        assert!(
-            amount <= sale.limit_per_transaction,
-            "ERR_LIMIT_PER_TX"
-        );
+        assert!(amount <= sale.limit_per_transaction, "ERR_LIMIT_PER_TX");
         assert!(
             staked_amount >= sale.min_near_deposit,
             "ERR_NOT_ENOUGH_STAKED"
@@ -227,7 +220,10 @@ impl Contract {
         let deposit_amount = if !sale.hard_max_amount_limit {
             amount
         } else {
-            std::cmp::min(amount, sale.max_amount.expect("ERR_MUST_HAVE_MAX_AMOUNT") - sale.collected_amount)
+            std::cmp::min(
+                amount,
+                sale.max_amount.expect("ERR_MUST_HAVE_MAX_AMOUNT") - sale.collected_amount,
+            )
         };
         let mut account_sale = sale
             .account_sales
@@ -246,102 +242,64 @@ impl Contract {
         amount - deposit_amount
     }
 
-
-    #[payable]
-    pub fn deposit_near(&mut self, sale_deposit: SaleDeposit) -> PromiseOrValue<U128> {
-        let sender_id = env::predecessor_account_id();
-        let _ = self
-            .accounts
-            .get(&sender_id)
-            .expect("ERR_NOT_REGISTERED_ACCOUNT");
-
-        let sale: Sale = self
-            .sales
-            .get(&sale_deposit.sale_id)
-            .expect("ERR_NO_SALE")
-            .into();
-        assert_eq!(
-            sale.deposit_token_id,
-            AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
-            "ERR_WRONG_TOKEN"
-        );
-        let amount = env::attached_deposit();
-        assert!(
-            amount <= sale.limit_per_transaction,
-            "ERR_LIMIT_PER_TX"
-        );
-        if sale.hard_max_amount_limit {
-            assert!(
-                sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
-                "ERR_SALE_DONE"
+    pub(crate) fn internal_finalize_near_deposit(
+        &mut self,
+        return_amount: Balance,
+        sender_id: AccountId,
+        deposit_amount: Balance,
+    ) -> PromiseOrValue<U128> {
+        let wrap_amount = deposit_amount - return_amount;
+        if wrap_amount > 0 {
+            // Assuming it will succeed
+            ext_wrap_near::near_deposit(
+                &AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
+                wrap_amount,
+                GAS_NEAR_DEPOSIT,
             );
         }
-        let timestamp = env::block_timestamp();
-        assert!(timestamp >= sale.start_date, "ERR_SALE_NOT_STARTED");
-        assert!(
-            timestamp >= sale.start_date && timestamp <= sale.end_date,
-            "ERR_SALE_DONE"
-        );
-
-        // Send call to check how much is staked if staking is required.
-        if sale.staking_contracts.len() > 0 {
-            let staking_contract = sale_deposit
-                .staking_contract
-                .expect("ERR_MUST_HAVE_STAKING_CONTRACT");
-            assert!(
-                sale.staking_contracts.contains(&staking_contract),
-                "ERR_NOT_WHITELISTED_STAKING_CONTRACT"
-            );
-            PromiseOrValue::Promise(
-                ext_staking_pool::get_account_staked_balance(
-                    sender_id.clone(),
-                    staking_contract,
-                    NO_DEPOSIT,
-                    GAS_GET_ACCOUNT_STAKED_BALANCE,
-                )
-                    .then(ext_self::on_get_account_staked_balance_on_near_deposit(
-                        sale_deposit.sale_id,
-                        sender_id,
-                        amount.into(),
-                        env::current_account_id(),
-                        NO_DEPOSIT,
-                        GAS_ON_GET_ACCOUNT_STAKED_BALANCE,
-                    )),
-            )
+        if return_amount > 0 {
+            Promise::new(sender_id).transfer(return_amount).into()
         } else {
-            PromiseOrValue::Promise(
-                ext_wrap_near::near_deposit(
-                    AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
-                    amount,
-                    GAS_NEAR_DEPOSIT,
-                ).then(ext_self::on_near_deposit(
-                    sale_deposit.sale_id,
-                    sender_id.clone(),
-                    amount.into(),
-                    env::current_account_id(),
-                    NO_DEPOSIT,
-                    GAS_ON_NEAR_DEPOSIT,
-                ))
-                    .then(ext_self::after_near_deposit(
-                        sender_id,
-                        amount.into(),
-                        env::current_account_id(),
-                        NO_DEPOSIT,
-                        GAS_AFTER_NEAR_DEPOSIT,
-                    )))
+            PromiseOrValue::Value(U128(0))
         }
     }
 }
 
 #[near_bindgen]
 impl Contract {
+    #[payable]
+    pub fn deposit_near(&mut self, sale_deposit: SaleDeposit) -> PromiseOrValue<U128> {
+        let sender_id = env::predecessor_account_id();
+        let token_id = AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string());
+        let amount = env::attached_deposit();
+        match self.internal_ft_on_transfer(token_id, sender_id.clone(), amount.into(), sale_deposit)
+        {
+            PromiseOrValue::Promise(promise) => promise
+                .then(ext_self::after_ft_on_transfer_near_deposit(
+                    sender_id,
+                    U128(amount),
+                    env::current_account_id(),
+                    NO_DEPOSIT,
+                    GAS_AFTER_FT_ON_TRANSFER_NEAR_DEPOSIT,
+                ))
+                .into(),
+            PromiseOrValue::Value(value) => {
+                ext_self::internal_after_ft_on_transfer_near_deposit(value.0, sender_id, amount)
+            }
+        }
+    }
+
     pub fn create_sale(&mut self, sale: SaleInput) -> u64 {
         assert_eq!(
             self.owner_id,
             env::predecessor_account_id(),
             "ERR_MUST_BE_OWNER"
         );
-        assert!(!sale.hard_max_amount_limit || (sale.hard_max_amount_limit && sale.max_amount.is_some()), "ERR_MUST_HAVE_MAX_AMOUNT");
+        assert!(
+            !sale.hard_max_amount_limit
+                || (sale.hard_max_amount_limit && sale.max_amount.is_some()),
+            "ERR_MUST_HAVE_MAX_AMOUNT"
+        );
         self.sales
             .insert(&self.num_sales, &VSale::new(self.num_sales, sale));
         let sale_id = self.num_sales;
@@ -393,7 +351,11 @@ impl Contract {
         sender_id: AccountId,
         deposit_amount: U128,
     ) -> PromiseOrValue<U128> {
-        assert_eq!(env::predecessor_account_id(), env::current_account_id(), "ERR_NOT_OWNER");
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "ERR_NOT_OWNER"
+        );
         log!("{} stake: {}", sender_id, staked_amount.0);
         PromiseOrValue::Value(U128(self.internal_sale_deposit(
             sale_id,
@@ -404,105 +366,17 @@ impl Contract {
         )))
     }
 
-    pub fn on_get_account_staked_balance_on_near_deposit(
+    #[private]
+    pub fn after_ft_on_transfer_near_deposit(
         &mut self,
-        #[callback] staked_amount: U128,
-        sale_id: u64,
+        #[callback_result] return_amount: Result<U128, PromiseError>,
         sender_id: AccountId,
         deposit_amount: U128,
     ) -> PromiseOrValue<U128> {
-        assert_eq!(env::predecessor_account_id(), env::current_account_id(), "ERR_NOT_OWNER");
-        log!("{} stake: {}", sender_id, staked_amount.0);
-
-        PromiseOrValue::Promise(
-            ext_wrap_near::near_deposit(
-                AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
-                deposit_amount.0,
-                GAS_NEAR_DEPOSIT,
-            ).then(ext_self::on_near_deposit(
-                sale_id,
-                sender_id.clone(),
-                deposit_amount,
-                env::current_account_id(),
-                NO_DEPOSIT,
-                GAS_ON_NEAR_DEPOSIT,
-            )).then(ext_self::after_near_deposit(
-                sender_id,
-                deposit_amount,
-                env::current_account_id(),
-                NO_DEPOSIT,
-                GAS_AFTER_NEAR_DEPOSIT,
-            )))
-    }
-
-    pub fn on_near_deposit(
-        &mut self,
-        sale_id: u64,
-        sender_id: AccountId,
-        deposit_amount: U128,
-    ) -> PromiseOrValue<U128> {
-        assert_eq!(env::predecessor_account_id(), env::current_account_id(), "ERR_NOT_OWNER");
-        if Contract::is_promise_success() {
-            return PromiseOrValue::Value(U128(self.internal_sale_deposit(
-                sale_id,
-                &AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
-                &sender_id,
-                0,
-                deposit_amount.0,
-            )));
-        } else {
-            self.internal_revert_near_deposit(sender_id, deposit_amount);
-            PromiseOrValue::Value(U128(0))
-        }
-    }
-
-    pub fn after_near_deposit(
-        &mut self,
-        sender_id: AccountId,
-        deposit_amount: U128,
-    ) -> PromiseOrValue<U128> {
-        assert_eq!(env::predecessor_account_id(), env::current_account_id(), "ERR_NOT_OWNER");
-        if !Contract::is_promise_success() {
-            self.internal_revert_near_deposit(sender_id, deposit_amount);
-        }
-        PromiseOrValue::Value(U128(0))
-    }
-
-    pub(crate) fn internal_revert_near_deposit(&mut self, account_id: AccountId, amount: U128) -> Promise{
-        log!("NEAR deposit failed. Sending tokens back...");
-        ext_wrap_near::near_withdraw(amount,
-                                     AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
-                                     ONE_YOCTO,
-                                     GAS_NEAR_UNWRAP)
-            .then(ext_self::on_revert_near_deposit(
-                account_id,
-                amount,
-                env::current_account_id(),
-                NO_DEPOSIT,
-                GAS_NEAR_WITHDRAW))
-
-    }
-
-    pub fn on_revert_near_deposit(&mut self, account_id: AccountId, amount: U128) -> PromiseOrValue<bool> {
-        assert_eq!(env::predecessor_account_id(), env::current_account_id(), "ERR_NOT_OWNER");
-        if Contract::is_promise_success() {
-            PromiseOrValue::Promise(Promise::new(account_id).transfer(amount.0))
-        }
-        else {
-            log!("NEAR unwrap failed");
-            PromiseOrValue::Value(false)
-        }
-    }
-
-    fn is_promise_success() -> bool {
-        assert_eq!(
-            env::promise_results_count(),
-            1,
-            "Contract expected a result on the callback"
-        );
-        match env::promise_result(0) {
-            PromiseResult::Successful(_) => true,
-            _ => false,
-        }
+        self.internal_finalize_near_deposit(
+            return_amount.map(|v| v.0).unwrap_or(0),
+            sender_id,
+            deposit_amount.0,
+        )
     }
 }
