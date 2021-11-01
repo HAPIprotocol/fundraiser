@@ -13,8 +13,6 @@ use crate::*;
 const ONE_YOCTO: Balance = 1;
 const GAS_NEAR_DEPOSIT: Gas = BASE_GAS;
 const GAS_AFTER_FT_ON_TRANSFER_NEAR_DEPOSIT: Gas = Gas(40_000_000_000_000);
-const GAS_GET_ACCOUNT_STAKED_BALANCE: Gas = Gas(25_000_000_000_000);
-const GAS_ON_GET_ACCOUNT_STAKED_BALANCE: Gas = Gas(25_000_000_000_000);
 
 #[ext_contract(ext_wrap_near)]
 pub trait ExtWrapNear {
@@ -252,7 +250,7 @@ impl Contract {
         if wrap_amount > 0 {
             // Assuming it will succeed
             ext_wrap_near::near_deposit(
-                &AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
+                AccountId::new_unchecked(WRAP_NEAR_ACCOUNT.to_string()),
                 wrap_amount,
                 GAS_NEAR_DEPOSIT,
             );
@@ -284,7 +282,7 @@ impl Contract {
                 ))
                 .into(),
             PromiseOrValue::Value(value) => {
-                ext_self::internal_after_ft_on_transfer_near_deposit(value.0, sender_id, amount)
+                self.internal_finalize_near_deposit(value.0, sender_id, amount)
             }
         }
     }
