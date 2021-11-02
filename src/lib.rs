@@ -1,11 +1,11 @@
-use near_sdk::{
-    AccountId,
-    Balance, BorshStorageKey, env, ext_contract, Gas, near_bindgen, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
-};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{
+    env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault,
+    Promise, PromiseOrValue, PublicKey,
+};
 
 use crate::sale::VSale;
 
@@ -20,6 +20,7 @@ pub(crate) const ON_CREATE_ACCOUNT_GAS: Gas = Gas(4 * BASE_GAS.0);
 
 const NO_DEPOSIT: Balance = 0;
 const ACCESS_KEY_ALLOWANCE: Balance = ONE_NEAR / 100;
+// AUDIT: This should be more than `ACCESS_KEY_ALLOWANCE` to cover cost of storage for access key + allowance.
 const CREATE_LINK_AMOUNT: Balance = ONE_NEAR / 100;
 const CREATE_ACCOUNT_AMOUNT: Balance = ONE_NEAR / 100;
 
@@ -38,37 +39,15 @@ pub trait ExtContract {
         deposit_amount: U128,
     ) -> PromiseOrValue<U128>;
 
-    /// Callback from checking staked balance of the given user doing NEAR deposit.
-    fn on_get_account_staked_balance_on_near_deposit(
-        &mut self,
-        sale_id: u64,
-        sender_id: AccountId,
-        deposit_amount: U128,
-    ) -> PromiseOrValue<U128>;
-
     /// Callback after account creation.
     fn on_create_account(&mut self, new_account_id: AccountId) -> Promise;
 
-    /// Callback after account creation
-    fn on_near_deposit(
-        &mut self,
-        sale_id: u64,
-        sender_id: AccountId,
-        deposit_amount: U128) -> PromiseOrValue<U128>;
-
-    /// Callback after internal deposit
-    fn after_near_deposit(
+    fn after_ft_on_transfer_near_deposit(
         &mut self,
         sender_id: AccountId,
-        deposit_amount: U128) -> PromiseOrValue<U128>;
-
-    /// Callback after account creation
-    fn on_revert_near_deposit(
-        &mut self,
-        account_id: AccountId,
-        amount: U128) -> PromiseOrValue<bool>;
+        deposit_amount: U128,
+    ) -> PromiseOrValue<U128>;
 }
-
 
 #[derive(BorshSerialize, BorshDeserialize)]
 struct Account {
@@ -149,6 +128,10 @@ impl Contract {
             &this.owner_id,
             &Account::new(&this.owner_id, &this.owner_id),
         );
+        // AUDIT: If this contract has other access keys (e.g. full access key), then it should
+        // be whitelisted by the owner. Otherwise an attacker may use `create_link` to claim this
+        // public key and then delete it, which can be used to remove any public key from this
+        // account that was not whitelisted before.
         this
     }
 
@@ -216,6 +199,8 @@ impl Contract {
             .expect("ERR_NO_LINK");
         self.accounts
             .insert(&new_account_id, &Account::new(&new_account_id, &referrer));
+        // AUDIT: Predecessor here is `env::current_account_id()`, so it's a bug. I guess you can
+        // use `referrer` here instead.
         self.internal_remove_link(env::predecessor_account_id(), env::signer_account_pk())
     }
 
@@ -227,6 +212,9 @@ impl Contract {
             "ERR_ACCOUNT_EXISTS"
         );
         assert_eq!(env::attached_deposit(), self.join_fee, "ERR_FEE");
+        // AUDIT: Why not take the `referrer_id` here from the front-end? Seems like a URL can
+        // contain the referrer_id and then it can be passed for a new user which will be used
+        // as this users referrer. Otherwise you can only create new accounts with referrals.
         self.accounts
             .insert(&account_id, &Account::new(&account_id, &self.owner_id));
     }
@@ -273,10 +261,10 @@ mod tests {
     use std::str::FromStr;
 
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-    use near_sdk::{PromiseResult, serde_json, testing_env};
     use near_sdk::json_types::U64;
-    use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
     use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
+    use near_sdk::{serde_json, testing_env, PromiseResult};
 
     use crate::sale::{SaleInput, SaleMetadata};
     use crate::token_receiver::SaleDeposit;
