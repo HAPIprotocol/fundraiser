@@ -22,8 +22,8 @@ docker create \
 fi
 
 docker start $NAME
-docker exec -it $NAME /bin/bash -c "rustup toolchain install stable-2020-10-08; rustup default stable-2020-10-08; rustup target add wasm32-unknown-unknown; cargo build --target wasm32-unknown-unknown --release"
+docker exec -it $NAME /bin/bash -c "rustup toolchain install stable-2021-10-21; rustup default stable-2021-10-21; rustup target add wasm32-unknown-unknown; cargo build --target wasm32-unknown-unknown --release"
 
 mkdir -p res
-cp $DIR/../target/wasm32-unknown-unknown/release/fundraiser.wasm $DIR/../res/fundraiser_release.wasm
+cp $DIR/target/wasm32-unknown-unknown/release/fundraiser.wasm $DIR/res/fundraiser_release.wasm
 
