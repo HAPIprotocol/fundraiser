@@ -26,7 +26,7 @@ const CREATE_ACCOUNT_AMOUNT: Balance = ONE_NEAR / 100;
 
 const REFERRAL_FEE_DENOMINATOR: u128 = 10000;
 const NEAR_ACCOUNT: &str = "near";
-const WRAP_NEAR_ACCOUNT: &str = "wrap.testnet";
+const WRAP_NEAR_ACCOUNT: &str = "wrap.near";
 
 #[ext_contract(ext_self)]
 pub trait ExtContract {

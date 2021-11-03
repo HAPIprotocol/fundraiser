@@ -79,6 +79,7 @@ pub struct SaleInput {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleOutput {
+    pub sale_id: Option<u64>,
     pub metadata: SaleMetadata,
     pub staking_contracts: Vec<AccountId>,
     pub min_near_deposit: U128,
@@ -134,6 +135,7 @@ impl From<VSale> for SaleOutput {
     fn from(v_sale: VSale) -> Self {
         match v_sale {
             VSale::Current(sale) => SaleOutput {
+                sale_id: None,
                 metadata: sale.metadata,
                 staking_contracts: sale.staking_contracts,
                 min_near_deposit: U128(sale.min_near_deposit),
@@ -197,6 +199,12 @@ impl From<VSaleAccount> for SaleAccount {
 }
 
 impl Contract {
+    fn get_sale_output(sale: VSale, sale_id: &u64) -> SaleOutput{
+        let mut output: SaleOutput = sale.into();
+        output.sale_id = Some(*sale_id);
+        output
+    }
+
     /// Validates deposit and records it for the given user for give sale.
     /// Returns extra amount if sale is already over capacity.
     pub(crate) fn internal_sale_deposit(
@@ -305,17 +313,37 @@ impl Contract {
         sale_id
     }
 
+    #[private]
+    pub fn remove_sale(&mut self, sale_id: u64){
+        let sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert_eq!(sale.collected_amount, 0, "SALE_NOT_EMPTY");
+        self.sales.remove(&sale_id);
+    }
+
+    #[private]
+    pub fn update_sale_dates(&mut self, sale_id: u64, start_date: U64, end_date: U64){
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(
+            sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
+            "ERR_SALE_DONE"
+        );
+        sale.start_date = start_date.into();
+        sale.end_date = end_date.into();
+        self.sales.insert(&sale_id, &VSale::Current(sale));
+    }
+
     pub fn get_num_sales(&self) -> u64 {
         self.num_sales
     }
 
     pub fn get_sale(&self, sale_id: u64) -> SaleOutput {
-        self.sales.get(&sale_id).expect("ERR_NO_SALE").into()
+        Contract::get_sale_output(self.sales.get(&sale_id).expect("ERR_NO_SALE"), &sale_id)
+
     }
 
     pub fn get_sales(&self, from_index: u64, limit: u64) -> Vec<SaleOutput> {
         (from_index..std::cmp::min(from_index + limit, self.num_sales))
-            .filter_map(|sale_id| self.sales.get(&sale_id).map(|sale| sale.into()))
+            .filter_map(|sale_id| self.sales.get(&sale_id).map(|sale| Contract::get_sale_output(sale, &sale_id)))
             .collect()
     }
 
