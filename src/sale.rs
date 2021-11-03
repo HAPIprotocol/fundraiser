@@ -363,10 +363,13 @@ impl Contract {
 
     pub fn get_sale_account(&self, sale_id: u64, account_id: AccountId) -> SaleAccount {
         let sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
-        sale.account_sales
-            .get(&account_id)
-            .expect("ERR_NO_ACCOUNT_SALE")
-            .into()
+        if let Some(sale_account) = sale.account_sales.get(&account_id) {
+            sale_account.into()
+        } else {
+            SaleAccount {
+                amount: U128::from(0)
+            }
+        }
     }
 
     pub fn on_get_account_staked_balance(
