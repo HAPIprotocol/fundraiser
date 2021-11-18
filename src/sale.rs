@@ -1,18 +1,25 @@
+use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
+use near_sdk::{
+    AccountId, Balance, CryptoHash, ext_contract, log, PromiseError, PromiseOrValue, PromiseResult,
+    Timestamp,
+};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{
-    ext_contract, log, AccountId, Balance, CryptoHash, PromiseError, PromiseOrValue, PromiseResult,
-    Timestamp,
-};
 
-use crate::token_receiver::*;
 use crate::*;
+use crate::token_receiver::*;
 
 const ONE_YOCTO: Balance = 1;
 const GAS_NEAR_DEPOSIT: Gas = BASE_GAS;
 const GAS_AFTER_FT_ON_TRANSFER_NEAR_DEPOSIT: Gas = Gas(40_000_000_000_000);
+const GAS_FOR_FT_TRANSFER: Gas = Gas(10_000_000_000_000);
+const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(10_000_000_000_000);
+
+uint::construct_uint! {
+    pub struct U256(4);
+}
 
 #[ext_contract(ext_wrap_near)]
 pub trait ExtWrapNear {
@@ -55,6 +62,12 @@ pub struct SaleInput {
     pub min_near_deposit: U128,
     /// Token to sell for.
     pub deposit_token_id: AccountId,
+    /// Is claim available?
+    pub claim_available: bool,
+    /// Token for sale
+    pub distribute_token_id: Option<AccountId>,
+    /// Number of decimals of token for sale, used to calculate purchase amount
+    pub distribute_token_decimals: Option<u8>,
     /// Minimum amount of deposit token.
     pub min_buy: U128,
     /// Maximum amount of deposit token for one account.
@@ -84,6 +97,9 @@ pub struct SaleOutput {
     pub staking_contracts: Vec<AccountId>,
     pub min_near_deposit: U128,
     pub deposit_token_id: AccountId,
+    pub claim_available: bool,
+    pub distribute_token_id: Option<AccountId>,
+    pub distribute_token_decimals: Option<u8>,
     pub min_buy: U128,
     pub max_buy: U128,
     pub max_amount: Option<U128>,
@@ -100,11 +116,12 @@ pub struct SaleOutput {
 /// Sale information.
 #[derive(BorshSerialize, BorshDeserialize)]
 pub enum VSale {
+    First(SaleOld),
     Current(Sale),
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
-pub struct Sale {
+pub struct SaleOld {
     pub metadata: SaleMetadata,
     pub staking_contracts: Vec<AccountId>,
     pub min_near_deposit: Balance,
@@ -123,9 +140,54 @@ pub struct Sale {
     pub account_sales: UnorderedMap<AccountId, VSaleAccount>,
 }
 
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct Sale {
+    pub metadata: SaleMetadata,
+    pub staking_contracts: Vec<AccountId>,
+    pub min_near_deposit: Balance,
+    pub deposit_token_id: AccountId,
+    pub claim_available: bool,
+    pub distribute_token_id: Option<AccountId>,
+    pub distribute_token_decimals: Option<u8>,
+    pub min_buy: Balance,
+    pub max_buy: Balance,
+    pub max_amount: Option<Balance>,
+    pub hard_max_amount_limit: bool,
+    pub start_date: Timestamp,
+    pub end_date: Timestamp,
+    pub price: Balance,
+    pub whitelist_hash: Option<CryptoHash>,
+    pub limit_per_transaction: Balance,
+
+    pub collected_amount: Balance,
+    pub account_sales: UnorderedMap<AccountId, VSaleAccount>,
+    pub account_affiliate_rewards: UnorderedMap<AccountId, VSaleAccount>,
+}
+
 impl From<VSale> for Sale {
     fn from(v_sale: VSale) -> Self {
         match v_sale {
+            VSale::First(sale) => Sale {
+                metadata: sale.metadata,
+                staking_contracts: sale.staking_contracts,
+                min_near_deposit: sale.min_near_deposit,
+                deposit_token_id: sale.deposit_token_id,
+                claim_available: false,
+                distribute_token_id: None,
+                distribute_token_decimals: None,
+                min_buy: sale.min_buy,
+                max_buy: sale.max_buy,
+                max_amount: sale.max_amount,
+                hard_max_amount_limit: sale.hard_max_amount_limit,
+                start_date: sale.start_date,
+                end_date: sale.end_date,
+                price: sale.price,
+                whitelist_hash: sale.whitelist_hash,
+                limit_per_transaction: sale.limit_per_transaction,
+                collected_amount: sale.collected_amount,
+                account_sales: sale.account_sales,
+                account_affiliate_rewards: UnorderedMap::new(StorageKey::AccountSales { sale_id: 0 }),
+            },
             VSale::Current(sale) => sale,
         }
     }
@@ -134,12 +196,36 @@ impl From<VSale> for Sale {
 impl From<VSale> for SaleOutput {
     fn from(v_sale: VSale) -> Self {
         match v_sale {
+            VSale::First(sale) => SaleOutput {
+                sale_id: None,
+                metadata: sale.metadata,
+                staking_contracts: sale.staking_contracts,
+                min_near_deposit: U128(sale.min_near_deposit),
+                deposit_token_id: sale.deposit_token_id,
+                claim_available: false,
+                distribute_token_id: None,
+                distribute_token_decimals: None,
+                min_buy: U128(sale.min_buy),
+                max_buy: U128(sale.max_buy),
+                max_amount: sale.max_amount.map(|amount| U128(amount)),
+                hard_max_amount_limit: sale.hard_max_amount_limit,
+                start_date: U64(sale.start_date),
+                end_date: U64(sale.end_date),
+                price: U128(sale.price),
+                whitelist_hash: sale.whitelist_hash,
+                limit_per_transaction: sale.limit_per_transaction.into(),
+                collected_amount: U128(sale.collected_amount),
+                num_account_sales: sale.account_sales.keys_as_vector().len(),
+            },
             VSale::Current(sale) => SaleOutput {
                 sale_id: None,
                 metadata: sale.metadata,
                 staking_contracts: sale.staking_contracts,
                 min_near_deposit: U128(sale.min_near_deposit),
                 deposit_token_id: sale.deposit_token_id,
+                claim_available: sale.claim_available,
+                distribute_token_id: sale.distribute_token_id,
+                distribute_token_decimals: sale.distribute_token_decimals,
                 min_buy: U128(sale.min_buy),
                 max_buy: U128(sale.max_buy),
                 max_amount: sale.max_amount.map(|amount| U128(amount)),
@@ -163,6 +249,9 @@ impl VSale {
             staking_contracts: sale_input.staking_contracts,
             min_near_deposit: sale_input.min_near_deposit.0,
             deposit_token_id: sale_input.deposit_token_id,
+            claim_available: sale_input.claim_available,
+            distribute_token_id: sale_input.distribute_token_id,
+            distribute_token_decimals: sale_input.distribute_token_decimals,
             min_buy: sale_input.min_buy.0,
             max_buy: sale_input.max_buy.0,
             max_amount: sale_input.max_amount.map(|amount| amount.0),
@@ -174,6 +263,7 @@ impl VSale {
             limit_per_transaction: sale_input.limit_per_transaction.into(),
             collected_amount: 0,
             account_sales: UnorderedMap::new(StorageKey::AccountSales { sale_id }),
+            account_affiliate_rewards: UnorderedMap::new(StorageKey::AccountAffiliateRewards { sale_id }),
         })
     }
 }
@@ -181,19 +271,31 @@ impl VSale {
 /// Account deposits for the a sale.
 #[derive(BorshSerialize, BorshDeserialize)]
 pub enum VSaleAccount {
+    First(SaleAccountOld),
     Current(SaleAccount),
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct SaleAccountOld {
+    pub amount: U128,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleAccount {
     pub amount: U128,
+    pub claimed: U128,
 }
 
 impl From<VSaleAccount> for SaleAccount {
     fn from(v_account_sale: VSaleAccount) -> Self {
         match v_account_sale {
             VSaleAccount::Current(account_sale) => account_sale,
+            VSaleAccount::First(account_sale) => SaleAccount {
+                amount: account_sale.amount,
+                claimed: U128::from(0),
+            },
         }
     }
 }
@@ -235,17 +337,47 @@ impl Contract {
             .account_sales
             .get(&sender_id)
             .map(|account_sale| account_sale.into())
-            .unwrap_or(SaleAccount { amount: U128(0) });
+            .unwrap_or(SaleAccount { amount: U128(0), claimed: U128(0) });
         account_sale.amount = U128(account_sale.amount.0 + deposit_amount);
         assert!(
             sale.max_buy >= account_sale.amount.0 && sale.min_buy <= account_sale.amount.0,
             "ERR_WRONG_AMOUNT"
         );
-        sale.account_sales
-            .insert(&sender_id, &VSaleAccount::Current(account_sale));
+
+        let fees = self.referral_fees.clone();
+        if let Some(referrer_account_1) = self.accounts.get(&sender_id) {
+            let reward_1 = deposit_amount * fees[0] as u128 / 10000;
+            self.internal_insert_affiliate(&mut sale, &referrer_account_1.referrer, reward_1);
+            if let Some(referrer_account_2) = self.accounts.get(&referrer_account_1.referrer) {
+                let reward_2 = deposit_amount * fees[1] as u128 / 10000;
+                self.internal_insert_affiliate(&mut sale, &referrer_account_2.referrer, reward_2);
+                if let Some(referrer_account_3) = self.accounts.get(&referrer_account_2.referrer) {
+                    let reward_3 = deposit_amount * fees[2] as u128 / 10000;
+                    self.internal_insert_affiliate(&mut sale, &referrer_account_3.referrer, reward_3);
+                }
+            }
+        }
+
+        sale.account_sales.insert(&sender_id, &VSaleAccount::Current(account_sale));
         sale.collected_amount += deposit_amount;
         self.sales.insert(&sale_id, &VSale::Current(sale));
         amount - deposit_amount
+    }
+
+    pub(crate) fn internal_insert_affiliate(&mut self, sale: &mut Sale, account_id: &AccountId, amount: u128) {
+        let account_affiliate_reward =
+            if let Some(v_account_affiliate_reward) = sale.account_affiliate_rewards.get(account_id) {
+                let mut account_affiliate_reward: SaleAccount = v_account_affiliate_reward.into();
+                account_affiliate_reward.amount = U128::from(account_affiliate_reward.amount.0 + amount);
+                account_affiliate_reward
+            } else {
+                SaleAccount {
+                    amount: U128::from(amount),
+                    claimed: U128::from(0),
+                }
+            };
+
+        sale.account_affiliate_rewards.insert(&account_id, &VSaleAccount::Current(account_affiliate_reward));
     }
 
     pub(crate) fn internal_finalize_near_deposit(
@@ -273,6 +405,74 @@ impl Contract {
 
 #[near_bindgen]
 impl Contract {
+    pub fn claim_purchase(&mut self, sale_id: u64) -> Promise {
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(sale.claim_available, "CLAIM_NOT_AVAILABLE");
+        assert_ne!(sale.price, 0, "NO_SALE_PRICE");
+
+        let distribute_token_decimals = sale.distribute_token_decimals.expect("NO_TOKEN_DECIMALS");
+        let distribute_token_id = sale.distribute_token_id.clone().expect("NO_TOKEN_ID");
+
+        let account_id = env::predecessor_account_id();
+
+        if let Some(v_sale_account) = sale.account_sales.get(&account_id) {
+            let mut account_sale: SaleAccount = v_sale_account.into();
+
+            assert_ne!(account_sale.amount.0, 0, "NO_ALLOCATION");
+            assert_eq!(account_sale.claimed.0, 0, "ALREADY_CLAIMED");
+
+            let claimed: u128 = (
+                U256::from(u128::pow(10, distribute_token_decimals as u32))
+                    * U256::from(account_sale.amount.0)
+                    / U256::from(sale.price)
+            )
+                .as_u128();
+
+            assert_ne!(claimed, 0, "NOTHING_TO_CLAIM");
+
+            log!("Amount to claim: {}", claimed);
+
+            account_sale.claimed = U128::from(claimed);
+
+            sale.account_sales
+                .insert(&account_id, &VSaleAccount::Current(account_sale));
+            self.sales.insert(&sale_id, &VSale::Current(sale));
+
+            self.withdraw_purchase(account_id, claimed, distribute_token_id, sale_id)
+        } else {
+            panic!("NO_DATA");
+        }
+    }
+
+    pub fn claim_affiliate_reward(&mut self, sale_id: u64) -> Promise {
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        let account_id = env::predecessor_account_id();
+
+        if let Some(v_sale_account) = sale.account_affiliate_rewards.get(&account_id) {
+            let mut account_sale: SaleAccount = v_sale_account.into();
+
+            assert_ne!(account_sale.amount.0, 0, "NO_AFFILIATE_REWARDS");
+            let already_claimed: u128 = account_sale.claimed.0;
+
+            let amount_to_claim: u128 = account_sale.amount.0 - already_claimed;
+
+            assert_ne!(amount_to_claim, 0, "NOTHING_TO_CLAIM");
+
+            log!("Amount to claim: {}", amount_to_claim);
+
+            account_sale.claimed = account_sale.amount;
+
+            let deposit_token_id = sale.deposit_token_id.clone();
+
+            sale.account_affiliate_rewards.insert(&account_id, &VSaleAccount::Current(account_sale));
+            self.sales.insert(&sale_id, &VSale::Current(sale));
+
+            self.withdraw_affiliate_reward(account_id, amount_to_claim, deposit_token_id, sale_id)
+        } else {
+            panic!("NO_DATA");
+        }
+    }
+
     #[payable]
     pub fn deposit_near(&mut self, sale_deposit: SaleDeposit) -> PromiseOrValue<U128> {
         let sender_id = env::predecessor_account_id();
@@ -314,14 +514,20 @@ impl Contract {
     }
 
     #[private]
-    pub fn remove_sale(&mut self, sale_id: u64){
+    pub fn remove_sale(&mut self, sale_id: u64) {
         let sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
         assert_eq!(sale.collected_amount, 0, "SALE_NOT_EMPTY");
         self.sales.remove(&sale_id);
     }
 
     #[private]
-    pub fn update_sale_dates(&mut self, sale_id: u64, start_date: U64, end_date: U64){
+    pub fn update_referral_fees(&mut self, referral_fees: Vec<u64>) {
+        assert_eq!(referral_fees.len(), 3, "WRONG_LENGTH");
+        self.referral_fees = referral_fees;
+    }
+
+    #[private]
+    pub fn update_sale_dates(&mut self, sale_id: u64, start_date: U64, end_date: U64) {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
         assert!(
             sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
@@ -332,13 +538,37 @@ impl Contract {
         self.sales.insert(&sale_id, &VSale::Current(sale));
     }
 
+    #[private]
+    pub fn update_sale_distribute_token_id(&mut self, sale_id: u64, distribute_token_id: AccountId) {
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(sale.distribute_token_id.is_none(), "ALREADY_SET");
+        sale.distribute_token_id = Some(distribute_token_id);
+        self.sales.insert(&sale_id, &VSale::Current(sale));
+    }
+
+    #[private]
+    pub fn update_sale_distribute_token_decimals(&mut self, sale_id: u64, distribute_token_decimals: u8) {
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(sale.distribute_token_decimals.is_none(), "ALREADY_SET");
+        sale.distribute_token_decimals = Some(distribute_token_decimals);
+        self.sales.insert(&sale_id, &VSale::Current(sale));
+    }
+
+    #[private]
+    pub fn update_sale_claim_available(&mut self, sale_id: u64, claim_available: bool) {
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(sale.distribute_token_id.is_some(), "NOT_ENOUGH_DATA");
+        assert!(sale.distribute_token_decimals.is_some(), "NOT_ENOUGH_DATA");
+        sale.claim_available = claim_available;
+        self.sales.insert(&sale_id, &VSale::Current(sale));
+    }
+
     pub fn get_num_sales(&self) -> u64 {
         self.num_sales
     }
 
     pub fn get_sale(&self, sale_id: u64) -> SaleOutput {
         Contract::get_sale_output(self.sales.get(&sale_id).expect("ERR_NO_SALE"), &sale_id)
-
     }
 
     pub fn get_sales(&self, from_index: u64, limit: u64) -> Vec<SaleOutput> {
@@ -367,7 +597,20 @@ impl Contract {
             sale_account.into()
         } else {
             SaleAccount {
-                amount: U128::from(0)
+                amount: U128::from(0),
+                claimed: U128::from(0),
+            }
+        }
+    }
+
+    pub fn get_affiliate_account(&self, sale_id: u64, account_id: AccountId) -> SaleAccount {
+        let sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        if let Some(sale_account) = sale.account_affiliate_rewards.get(&account_id) {
+            sale_account.into()
+        } else {
+            SaleAccount {
+                amount: U128::from(0),
+                claimed: U128::from(0),
             }
         }
     }
@@ -408,4 +651,107 @@ impl Contract {
             deposit_amount.0,
         )
     }
+
+    pub(crate) fn withdraw_purchase(&mut self, recipient_account_id: AccountId, amount: Balance, token_account_id: AccountId,
+                                    sale_id: u64) -> Promise {
+        ext_fungible_token::ft_transfer(
+            recipient_account_id.clone(),
+            amount.into(),
+            Some(format!("Claim {} of {}. Sale #{}", amount, token_account_id, sale_id)),
+            token_account_id,
+            ONE_YOCTO,
+            GAS_FOR_FT_TRANSFER,
+        )
+            .then(ext_self::after_withdraw_purchase(
+                recipient_account_id,
+                amount.into(),
+                sale_id,
+                env::current_account_id(),
+                NO_DEPOSIT,
+                GAS_FOR_AFTER_FT_TRANSFER,
+            ))
+    }
+
+    #[private]
+    pub fn after_withdraw_purchase(
+        &mut self,
+        account_id: AccountId,
+        amount: U128,
+        sale_id: u64,
+    ) -> bool {
+        let promise_success = is_promise_success();
+        if !promise_success {
+            let mut sale: Sale = self
+                .sales
+                .get(&sale_id)
+                .expect("ERR_NO_SALE")
+                .into();
+
+            if let Some(v_sale_account) = sale.account_sales.get(&account_id) {
+                let mut account_sale: SaleAccount = v_sale_account.into();
+                account_sale.claimed = U128::from(account_sale.claimed.0 - amount.0);
+                sale.account_sales.insert(&account_id, &VSaleAccount::Current(account_sale));
+                self.sales.insert(&sale_id, &VSale::Current(sale));
+                log!("Purchase withdraw for {} failed. Tokens to recharge: {}",account_id, amount.0);
+            }
+        }
+        promise_success
+    }
+
+
+    pub(crate) fn withdraw_affiliate_reward(&mut self, recipient_account_id: AccountId, amount: Balance, token_account_id: AccountId,
+                                            sale_id: u64) -> Promise {
+        ext_fungible_token::ft_transfer(
+            recipient_account_id.clone(),
+            amount.into(),
+            Some(format!("Claim {} of {}. Sale #{}", amount, token_account_id, sale_id)),
+            token_account_id,
+            ONE_YOCTO,
+            GAS_FOR_FT_TRANSFER,
+        )
+            .then(ext_self::after_withdraw_affiliate_reward(
+                recipient_account_id,
+                amount.into(),
+                sale_id,
+                env::current_account_id(),
+                NO_DEPOSIT,
+                GAS_FOR_AFTER_FT_TRANSFER,
+            ))
+    }
+
+    #[private]
+    pub fn after_withdraw_affiliate_reward(
+        &mut self,
+        account_id: AccountId,
+        amount: U128,
+        sale_id: u64,
+    ) -> bool {
+        let promise_success = is_promise_success();
+        if !promise_success {
+            let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+
+            if let Some(v_sale_account) = sale.account_affiliate_rewards.get(&account_id) {
+                let mut account_sale: SaleAccount = v_sale_account.into();
+                account_sale.claimed = U128::from(account_sale.claimed.0 - amount.0);
+                sale.account_affiliate_rewards.insert(&account_id, &VSaleAccount::Current(account_sale));
+                self.sales.insert(&sale_id, &VSale::Current(sale));
+                log!("Affiliate rewards withdraw for {} failed. Tokens to recharge: {}",account_id, amount.0);
+            }
+        }
+        promise_success
+    }
 }
+
+
+fn is_promise_success() -> bool {
+    assert_eq!(
+        env::promise_results_count(),
+        1,
+        "Contract expected a result on the callback"
+    );
+    match env::promise_result(0) {
+        PromiseResult::Successful(_) => true,
+        _ => false,
+    }
+}
+

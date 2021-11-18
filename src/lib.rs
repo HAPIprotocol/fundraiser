@@ -1,16 +1,17 @@
+use near_sdk::{
+    AccountId, Balance, BorshStorageKey, env, ext_contract, Gas, near_bindgen, PanicOnDefault,
+    Promise, PromiseOrValue, PublicKey,
+};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{
-    env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault,
-    Promise, PromiseOrValue, PublicKey,
-};
 
 use crate::sale::VSale;
 
 mod sale;
 mod token_receiver;
+mod migration_1;
 
 pub(crate) const ONE_NEAR: Balance = 10u128.pow(24);
 
@@ -28,6 +29,7 @@ const REFERRAL_FEE_DENOMINATOR: u128 = 10000;
 const NEAR_ACCOUNT: &str = "near";
 const WRAP_NEAR_ACCOUNT: &str = "wrap.near";
 
+
 #[ext_contract(ext_self)]
 pub trait ExtContract {
     /// Callback from checking staked balance of the given user.
@@ -42,11 +44,18 @@ pub trait ExtContract {
     /// Callback after account creation.
     fn on_create_account(&mut self, new_account_id: AccountId) -> Promise;
 
+    /// Callback after near deposit
     fn after_ft_on_transfer_near_deposit(
         &mut self,
         sender_id: AccountId,
         deposit_amount: U128,
     ) -> PromiseOrValue<U128>;
+
+    /// Callback after token claim
+    fn after_withdraw_purchase(&mut self, account_id: AccountId, amount: U128, sale_id: u64) -> bool;
+
+    /// Callback after affiliate_rewards claim
+    fn after_withdraw_affiliate_reward(&mut self, account_id: AccountId, amount: U128, sale_id: u64) -> bool;
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -87,6 +96,7 @@ pub(crate) enum StorageKey {
     AccountSales { sale_id: u64 },
     Links,
     AccountLinks { account_id: AccountId },
+    AccountAffiliateRewards { sale_id: u64 },
 }
 
 #[near_bindgen]
@@ -95,6 +105,7 @@ struct Contract {
     owner_id: AccountId,
     join_fee: Balance,
     referral_fees: Vec<u64>,
+    // 3 values vector, 1 => 0.01% (fee / 10000)
     accounts: UnorderedMap<AccountId, Account>,
     sales: LookupMap<u64, VSale>,
     links: LookupMap<PublicKey, AccountId>,
@@ -205,18 +216,14 @@ impl Contract {
     }
 
     #[payable]
-    pub fn join(&mut self) {
+    pub fn join(&mut self, referrer_id: Option<AccountId>) {
         let account_id = env::predecessor_account_id();
-        assert!(
-            self.accounts.get(&account_id).is_none(),
-            "ERR_ACCOUNT_EXISTS"
-        );
+        let referrer_id_unwrapped = referrer_id.unwrap_or(self.owner_id.clone());
+        assert_ne!(referrer_id_unwrapped, account_id, "SELF_REFERRER");
+        assert!(self.accounts.get(&account_id).is_none(), "ERR_ACCOUNT_EXISTS");
         assert_eq!(env::attached_deposit(), self.join_fee, "ERR_FEE");
-        // AUDIT: Why not take the `referrer_id` here from the front-end? Seems like a URL can
-        // contain the referrer_id and then it can be passed for a new user which will be used
-        // as this users referrer. Otherwise you can only create new accounts with referrals.
         self.accounts
-            .insert(&account_id, &Account::new(&account_id, &self.owner_id));
+            .insert(&account_id, &Account::new(&account_id, &referrer_id_unwrapped));
     }
 
     pub fn get_join_fee(&self) -> U128 {
@@ -261,10 +268,10 @@ mod tests {
     use std::str::FromStr;
 
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+    use near_sdk::{PromiseResult, serde_json, testing_env};
     use near_sdk::json_types::U64;
-    use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
-    use near_sdk::{serde_json, testing_env, PromiseResult};
+    use near_sdk::test_utils::VMContextBuilder;
 
     use crate::sale::{SaleInput, SaleMetadata};
     use crate::token_receiver::SaleDeposit;
