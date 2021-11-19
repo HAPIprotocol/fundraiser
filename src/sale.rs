@@ -401,13 +401,16 @@ impl Contract {
         );
 
         let fees = self.referral_fees.clone();
-        if let Some(referrer_account_1) = self.accounts.get(&sender_id) {
+        if let Some(referrer_v_account_1) = self.accounts.get(&sender_id) {
+            let referrer_account_1: Account = referrer_v_account_1.into();
             let reward_1 = deposit_amount * fees[0] as u128 / REFERRAL_FEE_DENOMINATOR;
             self.internal_insert_affiliate(&mut sale, &referrer_account_1.referrer, reward_1);
-            if let Some(referrer_account_2) = self.accounts.get(&referrer_account_1.referrer) {
+            if let Some(referrer_v_account_2) = self.accounts.get(&referrer_account_1.referrer) {
+                let referrer_account_2: Account = referrer_v_account_2.into();
                 let reward_2 = deposit_amount * fees[1] as u128 / REFERRAL_FEE_DENOMINATOR;
                 self.internal_insert_affiliate(&mut sale, &referrer_account_2.referrer, reward_2);
-                if let Some(referrer_account_3) = self.accounts.get(&referrer_account_2.referrer) {
+                if let Some(referrer_v_account_3) = self.accounts.get(&referrer_account_2.referrer) {
+                    let referrer_account_3: Account = referrer_v_account_3.into();
                     let reward_3 = deposit_amount * fees[2] as u128 / REFERRAL_FEE_DENOMINATOR;
                     self.internal_insert_affiliate(&mut sale, &referrer_account_3.referrer, reward_3);
                 }
@@ -464,17 +467,29 @@ impl Contract {
     pub fn get_referrals(&self, account_id: AccountId) -> Vec<AccountId> {
         let mut referrals = [].to_vec();
 
-        if let Some(referrer_account_1) = self.accounts.get(&account_id) {
+        if let Some(referrer_v_account_1) = self.accounts.get(&account_id) {
+            let referrer_account_1: Account = referrer_v_account_1.into();
             referrals.push(referrer_account_1.referrer.clone());
-            if let Some(referrer_account_2) = self.accounts.get(&referrer_account_1.referrer) {
+            if let Some(referrer_v_account_2) = self.accounts.get(&referrer_account_1.referrer) {
+                let referrer_account_2: Account = referrer_v_account_2.into();
                 referrals.push(referrer_account_2.referrer.clone());
-                if let Some(referrer_account_3) = self.accounts.get(&referrer_account_2.referrer) {
+                if let Some(referrer_v_account_3) = self.accounts.get(&referrer_account_2.referrer) {
+                    let referrer_account_3: Account = referrer_v_account_3.into();
                     referrals.push(referrer_account_3.referrer);
                 }
             }
         }
 
         referrals
+    }
+
+    pub fn get_affiliates(&self, account_id: AccountId) -> (Vec<AccountId>, Vec<AccountId>, Vec<AccountId>) {
+        let account: Account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT").into();
+        (
+            internal_get_affiliates_vector(&account.affiliates, 0),
+            internal_get_affiliates_vector(&account.affiliates, 1),
+            internal_get_affiliates_vector(&account.affiliates, 2),
+        )
     }
 
     pub fn get_sale_amount(&self, sale_id: u64, account_id: AccountId) -> U128 {
@@ -1087,4 +1102,13 @@ fn get_amount_by_subscription(amount_to_claim: Balance, collected_amount: Balanc
             * U256::from(supply_amount)
             / U256::from(collected_amount)
     ).as_u128()
+}
+
+fn internal_get_affiliates_vector(affiliates: &LookupMap<u8, UnorderedSet<AccountId>>, level: u8) -> Vec<AccountId> {
+    if let Some(affiliates_unwrapped) =  affiliates.get(&level){
+        affiliates_unwrapped.to_vec()
+    }
+    else{
+        [].to_vec()
+    }
 }

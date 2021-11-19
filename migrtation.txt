@@ -1,0 +1,147 @@
+REINIT (SKIP FOR MAINNET)
+export CONTRACT_ID=dev-1637079331366-44744905777480
+near dev-deploy --wasmFile=res/fundraiser_local.wasm
+near call $CONTRACT_ID new '{"owner_id": "'$CONTRACT_ID'", "join_fee": "100000", "referral_fees": [10, 20, 30]}' --accountId $CONTRACT_ID
+
+STATE REPAIR:
+MIGRATE ACCOUNTS:
+near call $CONTRACT_ID migrate_a0 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_a1 '{"limit": 17}' --gas 200000000000000 --accountId $CONTRACT_ID (repeat until Pending items: 0)
+
+LOAD USERS
+near call $CONTRACT_ID migrate_u '{"from_index":0, "limit":60}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_u '{"from_index":60, "limit":60}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_u '{"from_index":120, "limit":60}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_u '{"from_index":180, "limit":60}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_u '{"from_index":240, "limit":60}' --gas 200000000000000 --accountId $CONTRACT_ID
+
+LOAD SALES
+near call $CONTRACT_ID migrate_s10 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s11 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s20 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s21 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s30 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s31 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s40 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID migrate_s41 '{}' --gas 200000000000000 --accountId $CONTRACT_ID
+
+CONFIG
+near call $CONTRACT_ID update_referral_fees '{"referral_fees": [50, 25, 10]}' --accountId $CONTRACT_ID
+/// Denominator: 10000
+
+NOTES:
+1) Check if claim_available for Aurora sales set to false. Otherwise: update_sale_claim_available
+
+2) How to claim purchase:
+- claim_purchase(sale_id)
+- check if get_sale_account(account_id, sale_id) has refund > 0
+- claim_refund(sale_id)
+
+
+====
+EXAMPLES:
+
+near view $CONTRACT_ID get_sale_accounts '{"sale_id": 0, "from_index":0, "limit":50}'
+near view $CONTRACT_ID get_sales '{"from_index":0, "limit":50}'
+near view $CONTRACT_ID get_accounts '{"from_index":0, "limit":50}'
+near view $CONTRACT_ID get_sale '{"sale_id": 3}'
+near view $CONTRACT_ID get_links '{"account_id": "n0ok.near"}'
+near view $CONTRACT_ID get_account '{"account_id": "n0ok.near"}'
+near view $CONTRACT_ID get_sale_account '{"account_id": "n0ok.near", "sale_id": 4}'
+near view $CONTRACT_ID get_num_sales '{}'
+
+near call $CONTRACT_ID update_sale_distribute_token_id '{"sale_id":3, "distribute_token_id": "wrap.testnet"}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID update_sale_distribute_token_decimals '{"sale_id":3, "distribute_token_decimals": 18}' --gas 200000000000000 --accountId $CONTRACT_ID
+near call $CONTRACT_ID claim_purchase '{"sale_id":3}' --gas 200000000000000 --accountId $CONTRACT_ID
+
+export TOKEN_ID=wrap.testnet
+export REFERRAL_ID=n0ok.near
+export USER_ID=lr.testnet
+near call $TOKEN_ID storage_deposit '{"account_id": "'$CONTRACT_ID'", "registration_only": true}' --accountId=$USER_ID --deposit 0.00125
+
+near call $CONTRACT_ID create_sale '{"sale": {"metadata": {"name": "test", "symbol": "TEST", "description": "test", "logo_url": "", "smart_contract_url": "", "output_ticker": "OUT", "project_telegram": "t.me/test", "reward_timestamp": 123, "reward_description": "123123123"}, "staking_contracts": [], "hard_max_amount_limit": false, "min_near_deposit": "0", "deposit_token_id": "'$TOKEN_ID'", "min_buy": "1", "max_buy": "30000000000000000000000000", "start_date": "10000000", "end_date": "1935298768424417800", "price": "200000000000000000000000", "max_amount": "30000000000000000000000", "limit_per_transaction": "2000000000000000000000000", "claim_available": true, "distribute_token_id": "'$TOKEN_ID'", "distribute_token_decimals": 24, "sale_type": "BySubscription", "distribute_supply_amount": "1000000000000000000000000"}}' --accountId $CONTRACT_ID
+
+export SALE_ID=11
+
+near call $CONTRACT_ID join '{"referrer_id": "'$REFERRAL_ID'"}' --accountId $USER_ID --depositYocto 100000
+
+near view $CONTRACT_ID get_account '{"account_id": "'$USER_ID'"}'
+
+near call $TOKEN_ID storage_deposit '{"account_id": "'$USER_ID'", "registration_only": true}' --accountId=$USER_ID --deposit 0.00125
+near call $CONTRACT_ID deposit_near '{"sale_deposit": {"sale_id": '$SALE_ID'}}' --accountId $USER_ID --deposit=0.1 --gas=150000000000000
+
+near view $CONTRACT_ID get_referrals '{"account_id": "'$USER_ID'"}'
+near view $CONTRACT_ID get_sale '{"sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_referral_fees '{}'
+near view $CONTRACT_ID get_sale_account '{"account_id": "'$USER_ID'", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "'$REFERRAL_ID'", "sale_id": '$SALE_ID'}'
+
+near call $CONTRACT_ID claim_purchase '{"sale_id": '$SALE_ID'}' --accountId $USER_ID --gas=150000000000000
+near call $CONTRACT_ID claim_affiliate_reward '{"sale_id": '$SALE_ID'}' --accountId $USER_ID --gas=150000000000000
+
+export REF_1=new_acc.testnet
+near call $CONTRACT_ID join '{}' --accountId nft1.testnet --depositYocto 100000
+near call $CONTRACT_ID join '{"referrer_id": "nft1.testnet"}' --accountId testbeta.testnet --depositYocto 100000
+near call $CONTRACT_ID join '{"referrer_id": "testbeta.testnet"}' --accountId new_acc.testnet --depositYocto 100000
+near call $CONTRACT_ID join '{"referrer_id": "'$REF_1'"}' --accountId lr.testnet --depositYocto 100000
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "nft1.testnet", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "testbeta.testnet", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "new_acc.testnet", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "lr.testnet", "sale_id": '$SALE_ID'}'
+near call $CONTRACT_ID deposit_near '{"sale_deposit": {"sale_id": '$SALE_ID'}}' --accountId $USER_ID --deposit=0.1 --gas=150000000000000
+near view $TOKEN_ID ft_balance_of '{"account_id": "'$USER_ID'"}'
+near call $TOKEN_ID storage_deposit '{"account_id": "'$USER_ID'", "registration_only": true}' --accountId=$USER_ID --deposit 0.00125
+near call $CONTRACT_ID claim_purchase '{"sale_id": '$SALE_ID'}' --accountId $USER_ID --gas=150000000000000
+
+near call $TOKEN_ID storage_deposit '{"account_id": "'$REF_1'", "registration_only": true}' --accountId=$USER_ID --deposit 0.00125
+near view $TOKEN_ID ft_balance_of '{"account_id": "'$REF_1'"}'
+near call $CONTRACT_ID claim_affiliate_reward '{"sale_id": '$SALE_ID'}' --accountId $REF_1 --gas=150000000000000
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "'$REF_1'", "sale_id": '$SALE_ID'}'
+
+// TEST By Subscription
+near call $CONTRACT_ID create_sale '{"sale": {"metadata": {"name": "test", "symbol": "TEST", "description": "test", "logo_url": "", "smart_contract_url": "", "output_ticker": "OUT", "project_telegram": "t.me/test", "reward_timestamp": 123, "reward_description": "123123123"}, "staking_contracts": [], "hard_max_amount_limit": false, "min_near_deposit": "0", "deposit_token_id": "'$TOKEN_ID'", "min_buy": "1", "max_buy": "30000000000000000000000000", "start_date": "10000000", "end_date": "1935298768424417800", "price": "200000000000000000000000", "max_amount": "30000000000000000000000", "limit_per_transaction": "2000000000000000000000000", "claim_available": true, "distribute_token_id": "'$TOKEN_ID'", "distribute_token_decimals": 24, "sale_type": "BySubscription", "distribute_supply_amount": "1000000000000000000000000"}}' --accountId $CONTRACT_ID
+
+export USER_2_ID=new_acc.testnet
+export USER_3_ID=testbeta.testnet
+export REF_2=testbeta.testnet
+near view $CONTRACT_ID get_sale '{"sale_id": '$SALE_ID'}'
+
+near call $CONTRACT_ID deposit_near '{"sale_deposit": {"sale_id": '$SALE_ID'}}' --accountId $USER_ID --deposit=0.3 --gas=150000000000000
+near view $CONTRACT_ID get_sale_account '{"account_id": "'$USER_ID'", "sale_id": '$SALE_ID'}'
+near call $CONTRACT_ID deposit_near '{"sale_deposit": {"sale_id": '$SALE_ID'}}' --accountId $USER_2_ID --deposit=0.4 --gas=150000000000000
+near view $CONTRACT_ID get_sale_account '{"account_id": "'$USER_2_ID'", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_account_after_claim '{"account_id": "'$USER_2_ID'", "sale_id": '$SALE_ID'}'
+near call $CONTRACT_ID deposit_near '{"sale_deposit": {"sale_id": '$SALE_ID'}}' --accountId $USER_3_ID --deposit=0.5 --gas=150000000000000
+near view $CONTRACT_ID get_sale_account '{"account_id": "'$USER_3_ID'", "sale_id": '$SALE_ID'}'
+
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "'$REF_1'", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "'$REF_2'", "sale_id": '$SALE_ID'}'
+
+near call $CONTRACT_ID claim_purchase '{"sale_id": '$SALE_ID'}' --accountId $USER_ID --gas=150000000000000
+near call $CONTRACT_ID claim_refund '{"sale_id": '$SALE_ID'}' --accountId $USER_ID --gas=150000000000000
+near call $CONTRACT_ID claim_purchase '{"sale_id": '$SALE_ID'}' --accountId $USER_2_ID --gas=150000000000000
+near call $CONTRACT_ID claim_purchase '{"sale_id": '$SALE_ID'}' --accountId $USER_3_ID --gas=150000000000000
+near call $CONTRACT_ID claim_refund '{"sale_id": '$SALE_ID'}' --accountId $USER_3_ID --gas=150000000000000
+
+near call $CONTRACT_ID claim_affiliate_reward '{"sale_id": '$SALE_ID'}' --accountId $USER_3_ID --gas=150000000000000
+near view $CONTRACT_ID get_affiliate_account '{"account_id": "'$USER_3_ID'", "sale_id": '$SALE_ID'}'
+near view $CONTRACT_ID get_affiliate_reward_account_after_claim  '{"account_id": "'$USER_3_ID'", "sale_id": '$SALE_ID'}'
+
+
+export REF_0=learnrust2.testnet
+export REF_1=new_acc.testnet
+export REF_2=testbeta.testnet
+export REF_3=not-kotleta.testnet
+export REF_4=bubble-nft.testnet
+export REF_5=contract.lr.testnet
+export REF_6=my6.api.testnet
+near call $CONTRACT_ID join '{"referrer_id": "'$REF_1'"}' --accountId $REF_0 --depositYocto 100000
+near call $CONTRACT_ID join '{"referrer_id": "'$REF_0'"}' --accountId $REF_4 --depositYocto 100000
+near call $CONTRACT_ID join '{"referrer_id": "'$REF_4'"}' --accountId $REF_6 --depositYocto 100000
+near call $CONTRACT_ID join '{"referrer_id": "12312223'$REF_4'"}' --accountId market.dev-1625142307760-73087269739287 --depositYocto 100000
+
+near view $CONTRACT_ID get_account '{"account_id": "'$REF_1'"}'
+near view $CONTRACT_ID get_affiliates '{"account_id": "'$REF_4'"}'
+near view $CONTRACT_ID get_referrals '{"account_id": "'$REF_3'"}'
+
+near dev-deploy --wasmFile=res/fundraiser_local.wasm

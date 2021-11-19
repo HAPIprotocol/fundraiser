@@ -11,6 +11,7 @@ use crate::sale::VSale;
 
 mod sale;
 mod token_receiver;
+mod migration_0;
 mod migration_1;
 
 pub(crate) const ONE_NEAR: Balance = 10u128.pow(24);
@@ -69,22 +70,56 @@ pub trait ExtContract {
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
-struct Account {
+pub struct AccountOld {
     referrer: AccountId,
     links: UnorderedSet<PublicKey>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct Account {
+    referrer: AccountId,
+    links: UnorderedSet<PublicKey>,
+    affiliates: LookupMap<u8, UnorderedSet<AccountId>>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub enum VAccount {
+    Current(Account),
+}
+
+impl From<VAccount> for Account {
+    fn from(v_account: VAccount) -> Self {
+        match v_account {
+            VAccount::Current(account) => account,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 struct AccountOutput {
     referrer: AccountId,
+    affiliates_num: u64,
 }
 
 impl From<Account> for AccountOutput {
     fn from(account: Account) -> Self {
+        let aff_0 = get_affiliates_num(&account, 0);
+        let aff_1 = if aff_0 > 0 { get_affiliates_num(&account, 1) } else { 0 };
+        let aff_2 = if aff_1 > 0 { get_affiliates_num(&account, 2) } else { 0 };
+
         Self {
             referrer: account.referrer,
+            affiliates_num: aff_0 + aff_1 + aff_2,
         }
+    }
+}
+
+fn get_affiliates_num(account: &Account, level: u8) -> u64 {
+    if let Some(affiliates) = account.affiliates.get(&level) {
+        affiliates.len()
+    } else {
+        0
     }
 }
 
@@ -93,6 +128,9 @@ impl Account {
         Self {
             referrer: referrer.clone(),
             links: UnorderedSet::new(StorageKey::AccountLinks {
+                account_id: account_id.clone(),
+            }),
+            affiliates: LookupMap::new(StorageKey::Affiliates {
                 account_id: account_id.clone(),
             }),
         }
@@ -106,7 +144,10 @@ pub(crate) enum StorageKey {
     AccountSales { sale_id: u64 },
     Links,
     AccountLinks { account_id: AccountId },
-    AccountAffiliateRewards { sale_id: u64 }
+    AccountAffiliateRewards { sale_id: u64 },
+    Affiliates { account_id: AccountId },
+    AffiliateLevels { account_id: AccountId, level: u8 },
+    AccountsV1,
 }
 
 #[near_bindgen]
@@ -114,20 +155,22 @@ pub(crate) enum StorageKey {
 struct Contract {
     owner_id: AccountId,
     join_fee: Balance,
+    /// 3 values vector, 1 => 0.01% (fee / 10000)
     referral_fees: Vec<u64>,
-    // 3 values vector, 1 => 0.01% (fee / 10000)
-    accounts: UnorderedMap<AccountId, Account>,
+    accounts: UnorderedMap<AccountId, VAccount>,
     sales: LookupMap<u64, VSale>,
     links: LookupMap<PublicKey, AccountId>,
     num_sales: u64,
+    // not user anymore
+    accounts_old: UnorderedMap<AccountId, AccountOld>,
 }
 
 impl Contract {
     fn internal_remove_link(&mut self, account_id: AccountId, public_key: PublicKey) -> Promise {
-        let mut account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let mut account: Account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT").into();
         self.links.remove(&public_key);
         account.links.remove(&public_key);
-        self.accounts.insert(&account_id, &account);
+        self.accounts.insert(&account_id, &VAccount::Current(account));
         Promise::new(env::current_account_id()).delete_key(public_key)
     }
 }
@@ -144,10 +187,11 @@ impl Contract {
             sales: LookupMap::new(StorageKey::Sales),
             links: LookupMap::new(StorageKey::Links),
             num_sales: 0,
+            accounts_old: UnorderedMap::new(StorageKey::AccountsV1),
         };
         this.accounts.insert(
             &this.owner_id,
-            &Account::new(&this.owner_id, &this.owner_id),
+            &VAccount::Current(Account::new(&this.owner_id, &this.owner_id)),
         );
         // AUDIT: If this contract has other access keys (e.g. full access key), then it should
         // be whitelisted by the owner. Otherwise an attacker may use `create_link` to claim this
@@ -159,16 +203,17 @@ impl Contract {
     #[payable]
     pub fn create_link(&mut self, public_key: PublicKey) -> Promise {
         assert_eq!(env::attached_deposit(), CREATE_LINK_AMOUNT);
-        let mut account = self
+        let mut account: Account = self
             .accounts
             .get(&env::predecessor_account_id())
-            .expect("ERR_NO_ACCOUNT");
+            .expect("ERR_NO_ACCOUNT")
+            .into();
         assert!(self.links.get(&public_key).is_none(), "ERR_DUPLICATE_KEY");
         self.links
             .insert(&public_key, &env::predecessor_account_id());
         account.links.insert(&public_key);
         self.accounts
-            .insert(&env::predecessor_account_id(), &account);
+            .insert(&env::predecessor_account_id(), &VAccount::Current(account));
         Promise::new(env::current_account_id()).add_access_key(
             public_key,
             ACCESS_KEY_ALLOWANCE,
@@ -219,21 +264,73 @@ impl Contract {
             .get(&env::signer_account_pk())
             .expect("ERR_NO_LINK");
         self.accounts
-            .insert(&new_account_id, &Account::new(&new_account_id, &referrer));
+            .insert(&new_account_id, &VAccount::Current(Account::new(&new_account_id, &referrer)));
         // AUDIT: Predecessor here is `env::current_account_id()`, so it's a bug. I guess you can
         // use `referrer` here instead.
-        self.internal_remove_link(env::predecessor_account_id(), env::signer_account_pk())
+        // BEFORE AUDIT: self.internal_remove_link(env::predecessor_account_id(), env::signer_account_pk())
+        self.internal_remove_link(referrer, env::signer_account_pk())
     }
 
     #[payable]
     pub fn join(&mut self, referrer_id: Option<AccountId>) {
         let account_id = env::predecessor_account_id();
-        let referrer_id_unwrapped = referrer_id.unwrap_or(self.owner_id.clone());
+        let referrer_id_unwrapped: AccountId =
+            if let Some(referrer_id_unwrapped) = referrer_id {
+                if self.accounts.get(&referrer_id_unwrapped).is_some() {
+                    referrer_id_unwrapped
+                } else {
+                    self.owner_id.clone()
+                }
+            } else {
+                self.owner_id.clone()
+            };
+
         assert_ne!(referrer_id_unwrapped, account_id, "SELF_REFERRER");
         assert!(self.accounts.get(&account_id).is_none(), "ERR_ACCOUNT_EXISTS");
         assert_eq!(env::attached_deposit(), self.join_fee, "ERR_FEE");
         self.accounts
-            .insert(&account_id, &Account::new(&account_id, &referrer_id_unwrapped));
+            .insert(&account_id, &VAccount::Current(Account::new(&account_id, &referrer_id_unwrapped)));
+
+        // Don't save internal affiliates to save storage and gas
+        if self.owner_id != referrer_id_unwrapped {
+            self.insert_affiliates(referrer_id_unwrapped, account_id);
+        }
+    }
+
+    fn insert_affiliate_on_level(&mut self, referrer_id: &AccountId, mut referrer_account: Account, level: u8, affiliate_account_id: &AccountId) {
+        let mut affiliates_on_level: UnorderedSet<AccountId> =
+            if let Some(affiliates_unwrapped) = referrer_account.affiliates.get(&level) {
+                affiliates_unwrapped
+            } else {
+                UnorderedSet::new(StorageKey::AffiliateLevels {
+                    account_id: affiliate_account_id.clone(),
+                    level,
+                })
+            };
+
+        affiliates_on_level.insert(&affiliate_account_id);
+        referrer_account.affiliates.insert(&level, &affiliates_on_level);
+
+        self.accounts.insert(referrer_id, &VAccount::Current(referrer_account));
+    }
+
+    fn insert_affiliates(&mut self, referrer_1_id: AccountId, account_id: AccountId) {
+        if let Some(referrer_v_account_1) = self.accounts.get(&referrer_1_id) {
+            let referrer_account_1: Account = referrer_v_account_1.into();
+            let referrer_2_id = &referrer_account_1.referrer.clone();
+            self.insert_affiliate_on_level(&referrer_1_id, referrer_account_1, 0, &account_id);
+
+            if let Some(referrer_v_account_2) = self.accounts.get(referrer_2_id) {
+                let referrer_account_2: Account = referrer_v_account_2.into();
+                let referrer_3_id = &referrer_account_2.referrer.clone();
+                self.insert_affiliate_on_level(referrer_2_id, referrer_account_2, 1, &account_id);
+
+                if let Some(referrer_v_account_3) = self.accounts.get(referrer_3_id) {
+                    let referrer_account_3: Account = referrer_v_account_3.into();
+                    self.insert_affiliate_on_level(referrer_3_id, referrer_account_3, 2, &account_id);
+                }
+            }
+        }
     }
 
     pub fn get_join_fee(&self) -> U128 {
@@ -245,10 +342,12 @@ impl Contract {
     }
 
     pub fn get_account(&self, account_id: AccountId) -> AccountOutput {
-        self.accounts
+        let account: Account = self.accounts
             .get(&account_id)
             .expect("ERR_ACCOUNT_DOESNT_EXIST")
-            .into()
+            .into();
+
+        account.into()
     }
 
     pub fn get_num_accounts(&self) -> u64 {
@@ -259,7 +358,10 @@ impl Contract {
         let keys = self.accounts.keys_as_vector();
         let values = self.accounts.values_as_vector();
         (from_index..std::cmp::min(from_index + limit, keys.len()))
-            .map(|index| (keys.get(index).unwrap(), values.get(index).unwrap().into()))
+            .map(|index| {
+                let account: Account = values.get(index).unwrap().into();
+                (keys.get(index).unwrap(), account.into())
+            })
             .collect()
     }
 
@@ -268,7 +370,7 @@ impl Contract {
     }
 
     pub fn get_links(&self, account_id: AccountId) -> Vec<PublicKey> {
-        let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let account: Account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT").into();
         account.links.to_vec()
     }
 }
