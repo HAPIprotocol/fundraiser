@@ -28,6 +28,7 @@ const CREATE_ACCOUNT_AMOUNT: Balance = ONE_NEAR / 100;
 const REFERRAL_FEE_DENOMINATOR: u128 = 10000;
 const NEAR_ACCOUNT: &str = "near";
 const WRAP_NEAR_ACCOUNT: &str = "wrap.near";
+const DISABLE_CLAIM_DURING_SALE: bool = false; /// TODO mostly for debug, remove
 
 
 #[ext_contract(ext_self)]
@@ -52,7 +53,16 @@ pub trait ExtContract {
     ) -> PromiseOrValue<U128>;
 
     /// Callback after token claim
-    fn after_withdraw_purchase(&mut self, account_id: AccountId, amount: U128, sale_id: u64) -> bool;
+    fn after_withdraw_purchase(&mut self,
+                               account_id: AccountId,
+                               amount_to_claim: U128,
+                               sale_id: u64) -> bool;
+
+    /// Callback after token refund for subscription sales
+    fn after_refund_purchase(&mut self,
+                             account_id: AccountId,
+                             amount_to_refund: U128,
+                             sale_id: u64) -> bool;
 
     /// Callback after affiliate_rewards claim
     fn after_withdraw_affiliate_reward(&mut self, account_id: AccountId, amount: U128, sale_id: u64) -> bool;
@@ -96,7 +106,7 @@ pub(crate) enum StorageKey {
     AccountSales { sale_id: u64 },
     Links,
     AccountLinks { account_id: AccountId },
-    AccountAffiliateRewards { sale_id: u64 },
+    AccountAffiliateRewards { sale_id: u64 }
 }
 
 #[near_bindgen]
@@ -273,7 +283,7 @@ mod tests {
     use near_sdk::test_utils::{accounts, testing_env_with_promise_results};
     use near_sdk::test_utils::VMContextBuilder;
 
-    use crate::sale::{SaleInput, SaleMetadata};
+    use crate::sale::{SaleInput, SaleMetadata, SaleType};
     use crate::token_receiver::SaleDeposit;
 
     use super::*;
@@ -295,10 +305,20 @@ mod tests {
                 description: "".to_string(),
                 smart_contract_url: "".to_string(),
                 logo_url: "".to_string(),
+                output_ticker: "".to_string(),
+                project_telegram: None,
+                project_medium: None,
+                project_twitter: None,
+                reward_timestamp: None,
+                reward_description: None
             },
             staking_contracts: vec![AccountId::new_unchecked("test.staking".to_string())],
             min_near_deposit: U128(100),
             deposit_token_id: accounts(1),
+            claim_available: true,
+            distribute_token_id: None,
+            distribute_token_decimals: None,
+            distribute_supply_amount: None,
             min_buy: U128(100),
             max_buy: U128(10000),
             max_amount: max_amount.map(|a| U128(a)),
@@ -307,6 +327,8 @@ mod tests {
             end_date: U64(end_date),
             price: U128(1000),
             whitelist_hash: None,
+            limit_per_transaction: U128(100),
+            sale_type: SaleType::ByAmount
         });
         assert_eq!(contract.get_referral_fees(), referral_fees);
         assert_eq!(contract.get_join_fee(), join_fee);
