@@ -64,6 +64,8 @@ pub struct SaleInput {
     pub deposit_token_id: AccountId,
     /// Is claim available?
     pub claim_available: bool,
+    /// Is refund available
+    pub refund_available: bool,
     /// Token for sale
     pub distribute_token_id: Option<AccountId>,
     /// Number of decimals of token for sale, used to calculate purchase amount
@@ -74,8 +76,8 @@ pub struct SaleInput {
     pub min_buy: U128,
     /// Maximum amount of deposit token for one account.
     pub max_buy: U128,
-    /// Maximum amount that can be collected by the sale.
-    pub max_amount: Option<U128>,
+    /// Maximum amount that can be collected by the sale. A.k.a. target_amount
+    pub max_amount: U128,
     /// Max amount is hard requirement or not.
     /// If true, max_amount must be provided.
     pub hard_max_amount_limit: bool,
@@ -102,12 +104,13 @@ pub struct SaleOutput {
     pub min_near_deposit: U128,
     pub deposit_token_id: AccountId,
     pub claim_available: bool,
+    pub refund_available: bool,
     pub distribute_token_id: Option<AccountId>,
     pub distribute_token_decimals: Option<u8>,
     pub distribute_supply_amount: Option<U128>,
     pub min_buy: U128,
     pub max_buy: U128,
-    pub max_amount: Option<U128>,
+    pub max_amount: U128,
     pub hard_max_amount_limit: bool,
     pub start_date: U64,
     pub end_date: U64,
@@ -116,7 +119,7 @@ pub struct SaleOutput {
     pub limit_per_transaction: U128,
     pub collected_amount: U128,
     pub num_account_sales: u64,
-    pub sale_type: SaleType
+    pub sale_type: SaleType,
 }
 
 /// Sale information.
@@ -143,7 +146,7 @@ pub struct SaleOld {
     pub deposit_token_id: AccountId,
     pub min_buy: Balance,
     pub max_buy: Balance,
-    pub max_amount: Option<Balance>,
+    pub max_amount: Balance,
     pub hard_max_amount_limit: bool,
     pub start_date: Timestamp,
     pub end_date: Timestamp,
@@ -162,12 +165,14 @@ pub struct Sale {
     pub min_near_deposit: Balance,
     pub deposit_token_id: AccountId,
     pub claim_available: bool,
+    pub refund_available: bool,
     pub distribute_token_id: Option<AccountId>,
     pub distribute_token_decimals: Option<u8>,
     pub distribute_supply_amount: Option<U128>,
     pub min_buy: Balance,
     pub max_buy: Balance,
-    pub max_amount: Option<Balance>,
+    // target_amount
+    pub max_amount: Balance,
     pub hard_max_amount_limit: bool,
     pub start_date: Timestamp,
     pub end_date: Timestamp,
@@ -178,7 +183,7 @@ pub struct Sale {
     pub collected_amount: Balance,
     pub account_sales: UnorderedMap<AccountId, VSaleAccount>,
     pub account_affiliate_rewards: UnorderedMap<AccountId, VAffiliateRewardAccount>,
-    pub sale_type: SaleType,
+    pub sale_type: SaleType
 }
 
 impl From<VSale> for Sale {
@@ -190,6 +195,7 @@ impl From<VSale> for Sale {
                 min_near_deposit: sale.min_near_deposit,
                 deposit_token_id: sale.deposit_token_id,
                 claim_available: false,
+                refund_available: false,
                 distribute_token_id: None,
                 distribute_token_decimals: None,
                 distribute_supply_amount: None,
@@ -222,12 +228,13 @@ impl From<VSale> for SaleOutput {
                 min_near_deposit: U128(sale.min_near_deposit),
                 deposit_token_id: sale.deposit_token_id,
                 claim_available: false,
+                refund_available: false,
                 distribute_token_id: None,
                 distribute_token_decimals: None,
                 distribute_supply_amount: None,
                 min_buy: U128(sale.min_buy),
                 max_buy: U128(sale.max_buy),
-                max_amount: sale.max_amount.map(|amount| U128(amount)),
+                max_amount: U128(sale.max_amount),
                 hard_max_amount_limit: sale.hard_max_amount_limit,
                 start_date: U64(sale.start_date),
                 end_date: U64(sale.end_date),
@@ -236,7 +243,7 @@ impl From<VSale> for SaleOutput {
                 limit_per_transaction: sale.limit_per_transaction.into(),
                 collected_amount: U128(sale.collected_amount),
                 num_account_sales: sale.account_sales.keys_as_vector().len(),
-                sale_type: SaleType::ByAmount
+                sale_type: SaleType::ByAmount,
             },
             VSale::Current(sale) => SaleOutput {
                 sale_id: None,
@@ -245,12 +252,13 @@ impl From<VSale> for SaleOutput {
                 min_near_deposit: U128(sale.min_near_deposit),
                 deposit_token_id: sale.deposit_token_id,
                 claim_available: sale.claim_available,
+                refund_available: sale.refund_available,
                 distribute_token_id: sale.distribute_token_id,
                 distribute_token_decimals: sale.distribute_token_decimals,
                 distribute_supply_amount: sale.distribute_supply_amount,
                 min_buy: U128(sale.min_buy),
                 max_buy: U128(sale.max_buy),
-                max_amount: sale.max_amount.map(|amount| U128(amount)),
+                max_amount: U128(sale.max_amount),
                 hard_max_amount_limit: sale.hard_max_amount_limit,
                 start_date: U64(sale.start_date),
                 end_date: U64(sale.end_date),
@@ -259,7 +267,7 @@ impl From<VSale> for SaleOutput {
                 limit_per_transaction: sale.limit_per_transaction.into(),
                 collected_amount: U128(sale.collected_amount),
                 num_account_sales: sale.account_sales.keys_as_vector().len(),
-                sale_type: sale.sale_type
+                sale_type: sale.sale_type,
             },
         }
     }
@@ -273,12 +281,13 @@ impl VSale {
             min_near_deposit: sale_input.min_near_deposit.0,
             deposit_token_id: sale_input.deposit_token_id,
             claim_available: sale_input.claim_available,
+            refund_available: sale_input.refund_available,
             distribute_token_id: sale_input.distribute_token_id,
             distribute_token_decimals: sale_input.distribute_token_decimals,
             distribute_supply_amount: sale_input.distribute_supply_amount,
             min_buy: sale_input.min_buy.0,
             max_buy: sale_input.max_buy.0,
-            max_amount: sale_input.max_amount.map(|amount| amount.0),
+            max_amount: sale_input.max_amount.0,
             hard_max_amount_limit: sale_input.hard_max_amount_limit,
             start_date: sale_input.start_date.0,
             end_date: sale_input.end_date.0,
@@ -317,6 +326,7 @@ pub struct SaleAccountOld {
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleAccount {
     pub amount: U128,
+    pub amount_to_claim: U128,
     pub claimed: U128,
     pub refund: U128,
     pub refunded: U128,
@@ -328,6 +338,7 @@ impl From<VSaleAccount> for SaleAccount {
             VSaleAccount::Current(account_sale) => account_sale,
             VSaleAccount::First(account_sale) => SaleAccount {
                 amount: account_sale.amount,
+                amount_to_claim: U128(0),
                 claimed: U128(0),
                 refund: U128(0),
                 refunded: U128(0),
@@ -381,7 +392,7 @@ impl Contract {
         } else {
             std::cmp::min(
                 amount,
-                sale.max_amount.expect("ERR_MUST_HAVE_MAX_AMOUNT") - sale.collected_amount,
+                sale.max_amount - sale.collected_amount,
             )
         };
         let mut account_sale = sale
@@ -390,6 +401,7 @@ impl Contract {
             .map(|account_sale| account_sale.into())
             .unwrap_or(SaleAccount {
                 amount: U128(0),
+                amount_to_claim: U128(0),
                 claimed: U128(0),
                 refund: U128(0),
                 refunded: U128(0),
@@ -509,6 +521,8 @@ impl Contract {
         }
     }
 
+    // TODO remove
+    /*
     pub fn get_account_after_claim(&self, sale_id: u64, account_id: AccountId) -> SaleAccount {
         let sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
         let distribute_token_decimals = sale.distribute_token_decimals.expect("ERR_NO_TOKEN_DECIMALS");
@@ -533,7 +547,11 @@ impl Contract {
             let amount_to_claim: u128 = match sale.sale_type {
                 SaleType::ByAmount => total_amount_to_claim,
                 SaleType::BySubscription => {
-                    get_amount_by_subscription(total_amount_to_claim, total_filled_amount, sale.distribute_supply_amount.expect("ERR_MUST_HAVE_SUPPLY_AMOUNT").0)
+                    if sale.max_amount >= sale.collected_amount {
+                        total_amount_to_claim
+                    } else {
+                        get_amount_by_subscription(total_amount_to_claim, total_filled_amount, sale.distribute_supply_amount.expect("ERR_MUST_HAVE_SUPPLY_AMOUNT").0)
+                    }
                 }
             };
 
@@ -554,7 +572,7 @@ impl Contract {
         else {
             panic!("ERR_NO_DATA");
         }
-    }
+    }*/
 
     pub fn get_affiliate_reward_account_after_claim(&self, sale_id: u64, account_id: AccountId) -> AffiliateRewardAccount {
         let sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
@@ -587,25 +605,16 @@ impl Contract {
             account_affiliate_reward.claimed = U128(amount_to_claim);
 
             account_affiliate_reward
-        }
-        else {
+        } else {
             panic!("ERR_NO_DATA");
         }
     }
 
-    pub fn claim_purchase(&mut self, sale_id: u64) -> Promise {
+    fn internal_calculate_purchase(&mut self, sale_id: u64) {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
-        assert!(sale.claim_available, "ERR_CLAIM_NOT_AVAILABLE");
-        assert_ne!(sale.price, 0, "ERR_NO_SALE_PRICE");
-
-        if DISABLE_CLAIM_DURING_SALE {
-            assert!(env::block_timestamp() > sale.end_date, "ERR_SALE_IN_PROGRESS");
-        }
-
-        let distribute_token_decimals = sale.distribute_token_decimals.expect("ERR_NO_TOKEN_DECIMALS");
-        let distribute_token_id = sale.distribute_token_id.clone().expect("ERR_NO_TOKEN_ID");
 
         let account_id = env::predecessor_account_id();
+        let distribute_token_decimals = sale.distribute_token_decimals.expect("ERR_NO_TOKEN_DECIMALS");
 
         if let Some(v_sale_account) = sale.account_sales.get(&account_id) {
             let mut account_sale: SaleAccount = v_sale_account.into();
@@ -634,6 +643,9 @@ impl Contract {
                     get_amount_by_subscription(total_amount_to_claim, total_filled_amount, sale.distribute_supply_amount.expect("ERR_MUST_HAVE_SUPPLY_AMOUNT").0)
                 }
             };
+            if amount_to_claim > 0 {
+                account_sale.amount_to_claim = U128(amount_to_claim);
+            }
 
             let client_purchase_amount: u128 = (
                 U256::from(amount_to_claim)
@@ -641,39 +653,68 @@ impl Contract {
                     / U256::from(u128::pow(10, distribute_token_decimals as u32))
             ).as_u128();
 
-            assert_ne!(amount_to_claim, 0, "ERR_NOTHING_TO_CLAIM");
-            account_sale.claimed = U128(amount_to_claim);
-
-            log!("Amount to claim: {}", amount_to_claim);
-
             if deposit_amount > client_purchase_amount {
-                let amount_to_refund: u128 = deposit_amount - client_purchase_amount;
-                account_sale.refund = U128(amount_to_refund);
-                log!("Amount to refund: {}", amount_to_refund);
+                account_sale.refund = U128(deposit_amount - client_purchase_amount);
             }
+
+            sale.account_sales
+                .insert(&account_id, &VSaleAccount::Current(account_sale));
+            self.sales.insert(&sale_id, &VSale::Current(sale));
+        } else {
+            panic!("ERR_NO_DATA");
+        }
+    }
+
+    pub fn claim_purchase(&mut self, sale_id: u64) -> Promise {
+        let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(sale.claim_available, "ERR_CLAIM_NOT_AVAILABLE");
+        assert_ne!(sale.price, 0, "ERR_NO_SALE_PRICE");
+
+        if DISABLE_CLAIM_DURING_SALE {
+            assert!(env::block_timestamp() > sale.end_date, "ERR_SALE_IN_PROGRESS");
+        }
+
+        let distribute_token_id = sale.distribute_token_id.clone().expect("ERR_NO_TOKEN_ID");
+
+        let account_id = env::predecessor_account_id();
+
+        if let Some(v_sale_account) = sale.account_sales.get(&account_id) {
+            let mut account_sale: SaleAccount = v_sale_account.into();
+
+            self.internal_calculate_purchase(sale_id);
+
+            let amount_to_claim = account_sale.amount_to_claim;
+
+            assert_ne!(amount_to_claim.0, 0, "ERR_NOTHING_TO_CLAIM");
+            account_sale.claimed = amount_to_claim;
+
+            log!("Amount to claim: {}", amount_to_claim.0);
 
             sale.account_sales
                 .insert(&account_id, &VSaleAccount::Current(account_sale));
             self.sales.insert(&sale_id, &VSale::Current(sale));
 
             self.withdraw_purchase(account_id,
-                                   amount_to_claim,
+                                   amount_to_claim.0,
                                    distribute_token_id,
                                    sale_id)
-        } else {
-            panic!("ERR_NO_DATA");
+        }
+        else {
+            panic!("ERR_NO_DATA")
         }
     }
 
     pub fn claim_refund(&mut self, sale_id: u64) -> Promise {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
-        assert!(sale.claim_available, "ERR_CLAIM_NOT_AVAILABLE");
+        assert!(sale.refund_available, "ERR_CLAIM_NOT_AVAILABLE");
 
         if DISABLE_CLAIM_DURING_SALE {
             assert!(env::block_timestamp() > sale.end_date, "ERR_SALE_IN_PROGRESS");
         }
 
         let account_id = env::predecessor_account_id();
+
+        self.internal_calculate_purchase(sale_id);
 
         if let Some(v_sale_account) = sale.account_sales.get(&account_id) {
             let mut account_sale: SaleAccount = v_sale_account.into();
@@ -786,7 +827,7 @@ impl Contract {
             SaleType::ByAmount => {
                 assert!(
                     !sale.hard_max_amount_limit
-                        || (sale.hard_max_amount_limit && sale.max_amount.is_some()),
+                        || (sale.hard_max_amount_limit && sale.max_amount.0 > 0),
                     "ERR_MUST_HAVE_MAX_AMOUNT"
                 );
             }
@@ -818,7 +859,7 @@ impl Contract {
     pub fn update_sale_dates(&mut self, sale_id: u64, start_date: U64, end_date: U64) {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
         assert!(
-            sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
+            sale.collected_amount < sale.max_amount,
             "ERR_SALE_DONE"
         );
         sale.start_date = start_date.into();
@@ -886,6 +927,7 @@ impl Contract {
         } else {
             SaleAccount {
                 amount: U128(0),
+                amount_to_claim: U128(0),
                 claimed: U128(0),
                 refund: U128(0),
                 refunded: U128(0),

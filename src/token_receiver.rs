@@ -46,7 +46,7 @@ impl Contract {
         assert_eq!(sale.deposit_token_id, token_id, "ERR_WRONG_TOKEN");
         if sale.hard_max_amount_limit {
             assert!(
-                sale.collected_amount < sale.max_amount.expect("ERR_NO_MAX_AMOUNT"),
+                sale.collected_amount < sale.max_amount,
                 "ERR_SALE_DONE"
             );
         }

@@ -161,7 +161,7 @@ struct Contract {
     sales: LookupMap<u64, VSale>,
     links: LookupMap<PublicKey, AccountId>,
     num_sales: u64,
-    // not user anymore
+    // not used anymore
     accounts_old: UnorderedMap<AccountId, AccountOld>,
 }
 
@@ -391,7 +391,7 @@ mod tests {
     use super::*;
 
     fn contract_with_sale_info(
-        max_amount: Option<Balance>,
+        max_amount: Balance,
         start_date: u64,
         end_date: u64,
     ) -> (VMContextBuilder, Contract) {
