@@ -539,35 +539,38 @@ impl Contract {
             let mut account_sale: SaleAccount = v_sale_account.into();
 
             assert_ne!(account_sale.amount.0, 0, "ERR_NO_ALLOCATION");
-            assert_eq!(account_sale.claimed.0, 0, "ERR_ALREADY_CLAIMED");
-            assert_eq!(account_sale.refunded.0, 0, "ERR_ALREADY_REFUNDED");
 
             let deposit_amount = account_sale.amount.0;
 
-            let total_amount_to_claim: u128 = (
-                U256::from(u128::pow(10, distribute_token_decimals as u32))
-                    * U256::from(deposit_amount)
-                    / U256::from(sale.price)
-            ).as_u128();
+            let amount_to_claim: u128 =
+                if account_sale.claimed.0 == 0 {
+                    let total_amount_to_claim: u128 = (
+                        U256::from(u128::pow(10, distribute_token_decimals as u32))
+                            * U256::from(deposit_amount)
+                            / U256::from(sale.price)
+                    ).as_u128();
 
-            let total_filled_amount: u128 = (
-                U256::from(u128::pow(10, distribute_token_decimals as u32))
-                    * U256::from(sale.collected_amount)
-                    / U256::from(sale.price)
-            ).as_u128();
+                    let total_filled_amount: u128 = (
+                        U256::from(u128::pow(10, distribute_token_decimals as u32))
+                            * U256::from(sale.collected_amount)
+                            / U256::from(sale.price)
+                    ).as_u128();
 
-            let amount_to_claim: u128 = match sale.sale_type {
-                SaleType::ByAmount => total_amount_to_claim,
-                SaleType::BySubscription => {
-                    if sale.max_amount >= sale.collected_amount {
-                        total_amount_to_claim
-                    } else {
-                        get_amount_by_subscription(total_amount_to_claim, total_filled_amount, sale.distribute_supply_amount.expect("ERR_MUST_HAVE_SUPPLY_AMOUNT"))
+                    match sale.sale_type {
+                        SaleType::ByAmount => total_amount_to_claim,
+                        SaleType::BySubscription => {
+                            if sale.max_amount >= sale.collected_amount {
+                                total_amount_to_claim
+                            } else {
+                                get_amount_by_subscription(total_amount_to_claim, total_filled_amount, sale.distribute_supply_amount.expect("ERR_MUST_HAVE_SUPPLY_AMOUNT"))
+                            }
+                        }
                     }
-                }
-            };
+                } else {
+                    account_sale.claimed.0
+                };
 
-            if amount_to_claim > 0 {
+            if account_sale.amount_to_claim.0 == 0 && amount_to_claim > 0 {
                 account_sale.amount_to_claim = U128(amount_to_claim);
             }
 
@@ -577,12 +580,11 @@ impl Contract {
                     / U256::from(u128::pow(10, distribute_token_decimals as u32))
             ).as_u128();
 
-            if deposit_amount > client_purchase_amount {
+            if account_sale.refund.0 == 0 && deposit_amount > client_purchase_amount {
                 account_sale.refund = U128(deposit_amount - client_purchase_amount);
             }
 
-            sale.account_sales
-                .insert(&account_id, &VSaleAccount::Current(account_sale));
+            sale.account_sales.insert(&account_id, &VSaleAccount::Current(account_sale));
             self.sales.insert(&sale_id, &VSale::Current(sale));
         } else {
             panic!("ERR_NO_DATA");
@@ -602,10 +604,12 @@ impl Contract {
 
         let account_id = env::predecessor_account_id();
 
+        self.internal_calculate_purchase(sale_id);
+
         if let Some(v_sale_account) = sale.account_sales.get(&account_id) {
             let mut account_sale: SaleAccount = v_sale_account.into();
 
-            self.internal_calculate_purchase(sale_id);
+            assert_eq!(account_sale.claimed.0, 0, "ERR_ALREADY_CLAIMED");
 
             let amount_to_claim = account_sale.amount_to_claim;
 
@@ -614,8 +618,7 @@ impl Contract {
 
             log!("Amount to claim: {}", amount_to_claim.0);
 
-            sale.account_sales
-                .insert(&account_id, &VSaleAccount::Current(account_sale));
+            sale.account_sales.insert(&account_id, &VSaleAccount::Current(account_sale));
             self.sales.insert(&sale_id, &VSale::Current(sale));
 
             self.withdraw_purchase(account_id,
@@ -630,7 +633,7 @@ impl Contract {
 
     pub fn claim_refund(&mut self, sale_id: u64) -> Promise {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
-        assert!(sale.refund_available, "ERR_CLAIM_NOT_AVAILABLE");
+        assert!(sale.refund_available, "ERR_REFUND_NOT_AVAILABLE");
 
         if DISABLE_CLAIM_DURING_SALE {
             assert!(env::block_timestamp() > sale.end_date, "ERR_SALE_IN_PROGRESS");
