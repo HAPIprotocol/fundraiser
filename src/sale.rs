@@ -574,14 +574,16 @@ impl Contract {
                 account_sale.amount_to_claim = U128(amount_to_claim);
             }
 
-            let client_purchase_amount: u128 = (
-                U256::from(amount_to_claim)
-                    * U256::from(sale.price)
-                    / U256::from(u128::pow(10, distribute_token_decimals as u32))
-            ).as_u128();
+            if sale.sale_type == SaleType::BySubscription {
+                let client_purchase_amount: u128 = (
+                    U256::from(amount_to_claim)
+                        * U256::from(sale.price)
+                        / U256::from(u128::pow(10, distribute_token_decimals as u32))
+                ).as_u128();
 
-            if account_sale.refund.0 == 0 && deposit_amount > client_purchase_amount {
-                account_sale.refund = U128(deposit_amount - client_purchase_amount);
+                if account_sale.refund.0 == 0 && deposit_amount > client_purchase_amount {
+                    account_sale.refund = U128(deposit_amount - client_purchase_amount);
+                }
             }
 
             sale.account_sales.insert(&account_id, &VSaleAccount::Current(account_sale));
@@ -633,6 +635,7 @@ impl Contract {
 
     pub fn claim_refund(&mut self, sale_id: u64) -> Promise {
         let mut sale: Sale = self.sales.get(&sale_id).expect("ERR_NO_SALE").into();
+        assert!(sale.sale_type == SaleType::BySubscription, "ERR_REFUND_NOT_ALLOWED");
         assert!(sale.refund_available, "ERR_REFUND_NOT_AVAILABLE");
 
         if DISABLE_CLAIM_DURING_SALE {
